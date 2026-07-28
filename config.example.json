@@ -1,0 +1,30 @@
+{
+  "scan_interval_minutes": 10,
+  "alert_before_minutes": 60,
+  "web_host": "127.0.0.1",
+  "web_port": 5000,
+  "login_fail_limit": 3,
+  "login_lockout_minutes": 15,
+  "server": {
+    "mode": "waitress",
+    "threads": 8,
+    "behind_proxy": false,
+    "https_only": false
+  },
+  "email": {
+    "enabled": false,
+    "smtp_host": "smtp.gmail.com",
+    "smtp_port": 587,
+    "username": "your_email@gmail.com",
+    "app_password": "your_16_char_app_password",
+    "from_addr": "your_email@gmail.com"
+  },
+  "discord": {
+    "enabled": false,
+    "bot_token": "",
+    "command_prefix": "!"
+  },
+  "auth": {
+    "secret_key": "CHANGE_ME_random_64_hex_chars"
+  }
+}

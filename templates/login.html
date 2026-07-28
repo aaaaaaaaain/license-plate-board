@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<title>登入 - 台灣監理站車牌競標即時看板</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="container" style="max-width:420px;margin:0 auto;">
+  <div style="padding-top:calc(64px + env(safe-area-inset-top));text-align:center;">
+    <h1 style="font-size:22px;">登入</h1>
+    <div class="meta">台灣監理站車牌競標即時看板</div>
+  </div>
+
+  <form method="post" class="panel" style="margin-top:20px;">
+    <div class="ios-row column">
+      <label for="username">帳號</label>
+      <input type="text" id="username" name="username" autocomplete="username" placeholder="帳號" required autofocus>
+    </div>
+    <div class="ios-row column">
+      <label for="password">密碼</label>
+      <div class="pw-field">
+        <input type="password" id="password" name="password" autocomplete="current-password" placeholder="密碼" required>
+        <button type="button" class="pw-toggle">顯示</button>
+      </div>
+    </div>
+
+    {% if error %}
+    <div class="status-msg err">{{ error }}</div>
+    {% endif %}
+
+    <button type="submit" class="ios-btn-block primary">登入</button>
+    <a href="/register" class="ios-btn-block" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">註冊新帳號</a>
+  </form>
+
+  <div class="meta" style="text-align:center;margin-top:16px;line-height:1.6;">
+    看板與歷史查詢不需要帳號，<a href="/">直接看</a>就好。<br>
+    註冊是為了收藏追蹤號碼並接收截止提醒。
+  </div>
+</div>
+
+<script src="/static/password-toggle.js"></script>
+</body>
+</html>

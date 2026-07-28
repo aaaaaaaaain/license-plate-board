@@ -1,0 +1,699 @@
+:root {
+  color-scheme: light dark;
+  --bg: #F2F2F7;
+  --card-bg: #FFFFFF;
+  --card-shadow: 0 1px 2px rgba(0,0,0,.04), 0 1px 8px rgba(0,0,0,.04);
+  --label: #1C1C1E;
+  --label-secondary: #6C6C70;
+  --separator: #E5E5EA;
+  --fill-secondary: #E5E5EA;
+  --accent: #007AFF;
+  --accent-tint: rgba(0,122,255,.12);
+  --red: #FF3B30;
+  --red-tint: rgba(255,59,48,.12);
+  --green: #34C759;
+  --header-bg: rgba(242,242,247,.82);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #000000;
+    --card-bg: #1C1C1E;
+    --card-shadow: none;
+    --label: #F2F2F7;
+    --label-secondary: #98989D;
+    --separator: #38383A;
+    --fill-secondary: #2C2C2E;
+    --accent: #0A84FF;
+    --accent-tint: rgba(10,132,255,.18);
+    --red: #FF453A;
+    --red-tint: rgba(255,69,58,.18);
+    --green: #30D158;
+    --header-bg: rgba(20,20,22,.82);
+  }
+}
+
+* { -webkit-tap-highlight-color: transparent; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang TC",
+    "Microsoft JhengHei", "Helvetica Neue", sans-serif;
+  margin: 0;
+  padding: 0 0 calc(40px + env(safe-area-inset-bottom));
+  background: var(--bg);
+  color: var(--label);
+  -webkit-font-smoothing: antialiased;
+}
+
+header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: calc(14px + env(safe-area-inset-top)) 16px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 8px;
+  background: var(--header-bg);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  border-bottom: 0.5px solid var(--separator);
+}
+h1 {
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  margin: 0 0 3px;
+}
+.meta {
+  color: var(--label-secondary);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+nav a {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 15px;
+  font-weight: 500;
+  padding: 6px 4px;
+}
+nav a:active { opacity: 0.5; }
+.nav-username {
+  color: var(--label-secondary);
+  font-size: 14px;
+  padding: 6px 2px;
+}
+
+.container {
+  padding: 0 16px;
+}
+
+.banner {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  background: var(--red-tint);
+  color: var(--red);
+  padding: 12px 14px;
+  border-radius: 14px;
+  margin: 12px 0;
+  font-weight: 600;
+  font-size: 13.5px;
+  line-height: 1.4;
+}
+.banner.show { display: flex; }
+.banner .dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--red);
+  animation: pulse 1.4s infinite;
+}
+@keyframes pulse {
+  0% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.4; transform: scale(0.75); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+.toolbar, .panel, .ios-list-group {
+  background: var(--card-bg);
+  border-radius: 14px;
+  box-shadow: var(--card-shadow);
+}
+.toolbar, .panel {
+  padding: 14px 16px 16px;
+  margin: 12px 0;
+}
+/* 統計圖表的 SVG viewBox 是固定的 320x160，.container 在桌機上沒有 max-width，
+   不擋住的話寬螢幕會把整個 SVG 座標系統等比例放大，文字、格線全部變得巨大。
+   跟彈窗裡的走勢圖一樣限制在差不多的寬度，維持字級比例正常。
+   限寬之後在寬螢幕上會靠左、右邊空一大片，所以外層 .stats-chart-wrap 置中。 */
+#statsChart svg {
+  max-width: 560px;
+}
+.stats-chart-wrap {
+  max-width: 560px;
+  margin: 0 auto;
+}
+.stats-chart-title {
+  font-size: 12px;
+  color: var(--label-secondary);
+  text-align: center;
+  margin-bottom: 8px;
+}
+
+/* 決標統計的數字（共幾面／平均／最高／最低）原本擠成一行灰色小字，
+   改成一排數字磚：寬螢幕自動攤開填滿，手機自動折成兩欄。 */
+.stat-tiles {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+.stat-tile {
+  background: var(--fill-secondary);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+.stat-tile .stat-label {
+  font-size: 11.5px;
+  font-weight: 500;
+  color: var(--label-secondary);
+  letter-spacing: .3px;
+}
+.stat-tile .stat-value {
+  margin-top: 2px;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.stat-tile .stat-unit {
+  margin-left: 2px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--label-secondary);
+}
+
+/* 只有一天決標紀錄時畫折線圖沒有意義（一個點連不成線），改成畫當天的
+   價格區間帶：最低到最高的範圍，平均值標在實際位置上。 */
+.stats-range {
+  max-width: 560px;
+  margin: 0 auto;
+}
+.stats-range-bar {
+  position: relative;
+  height: 8px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent-tint), var(--accent));
+  margin: 26px 0 8px;
+}
+.stats-range-avg {
+  position: absolute;
+  top: -4px;
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--label);
+  transform: translateX(-2px);
+}
+.stats-range-avg-label {
+  position: absolute;
+  top: -24px;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.stats-range-ends {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11.5px;
+  color: var(--label-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.toolbar > strong, .toolbar > div > strong {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--label-secondary);
+  text-transform: uppercase;
+  letter-spacing: .3px;
+}
+
+.cat-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 150px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  margin: 10px 0 12px;
+}
+.cat-grid label {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  padding: 9px 14px;
+  min-height: 36px;
+  box-sizing: border-box;
+  border-radius: 999px;
+  background: var(--fill-secondary);
+  color: var(--label);
+  font-size: 13.5px;
+  font-weight: 500;
+  cursor: pointer;
+  user-select: none;
+  transition: background .15s ease, color .15s ease;
+}
+.cat-grid input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.cat-grid label:has(input:checked),
+.cat-grid label.active {
+  background: var(--accent);
+  color: #fff;
+}
+.cat-grid label:active { opacity: .7; }
+
+.toolbar-buttons {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+button, input[type="submit"] {
+  border: none;
+  background: var(--fill-secondary);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 10px 16px;
+  min-height: 40px;
+  box-sizing: border-box;
+  cursor: pointer;
+  font-size: 13.5px;
+  font-weight: 600;
+  font-family: inherit;
+  transition: opacity .1s ease;
+}
+button:active { opacity: .6; }
+button.primary {
+  background: var(--accent);
+  color: #fff;
+}
+#scanningTag {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  color: var(--label-secondary);
+  font-size: 13px;
+  font-weight: 500;
+}
+#scanningTag .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulse 1s infinite;
+}
+
+.table-wrap {
+  max-height: 70vh;
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 14px;
+  background: var(--card-bg);
+  box-shadow: var(--card-shadow);
+  margin: 12px 0 20px;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th, td {
+  padding: 10px 12px;
+  text-align: center;
+  border-bottom: 0.5px solid var(--separator);
+  font-size: 13px;
+  white-space: nowrap;
+}
+th {
+  background: var(--card-bg);
+  color: var(--label-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .3px;
+  position: sticky;
+  top: 0;
+  box-shadow: inset 0 -0.5px 0 var(--separator);
+}
+tr.urgent {
+  box-shadow: inset 3px 0 0 var(--red);
+  font-weight: 600;
+}
+tr.urgent td.remain {
+  color: var(--red);
+}
+td.remain {
+  font-variant-numeric: tabular-nums;
+}
+.empty-row td {
+  padding: 40px;
+  color: var(--label-secondary);
+}
+
+.pagination-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 20px 0;
+}
+.pagination-row .page-info {
+  font-size: 13px;
+  color: var(--label-secondary);
+  white-space: nowrap;
+}
+.pagination-row button:disabled {
+  opacity: .35;
+  cursor: default;
+}
+
+.filter-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.filter-row select,
+.filter-row input[type="text"] {
+  flex: 1;
+  min-width: 140px;
+  min-height: 40px;
+  box-sizing: border-box;
+  padding: 9px 10px;
+  border-radius: 10px;
+  border: none;
+  background: var(--fill-secondary);
+  color: var(--label);
+  font-size: 14px;
+  font-family: inherit;
+}
+.filter-row input[type="text"]::placeholder { color: var(--label-secondary); }
+.number-row {
+  cursor: pointer;
+  gap: 10px;
+}
+.number-row:active { background: var(--fill-secondary); }
+
+.hist-btn {
+  background: var(--accent-tint);
+  color: var(--accent);
+  border-radius: 999px;
+  padding: 8px 12px;
+  font-size: 14px;
+  min-width: 40px;
+  min-height: 40px;
+}
+
+/* --- 個人追蹤清單 --- */
+.watch-btn {
+  background: transparent;
+  color: var(--label-secondary);
+  border-radius: 999px;
+  padding: 6px;
+  font-size: 20px;
+  line-height: 1;
+  min-width: 36px;
+  min-height: 36px;
+}
+.watch-btn.on { color: #FF9F0A; }
+.watch-btn:active { opacity: .5; }
+
+.watch-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+/* --- 歷史紀錄 iOS 風格彈出視窗 --- */
+.modal-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(0, 0, 0, .4);
+  align-items: flex-end;
+  justify-content: center;
+}
+.modal-overlay.show { display: flex; }
+.modal-sheet {
+  background: var(--card-bg);
+  width: 100%;
+  max-width: 480px;
+  max-height: 82vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 20px 20px 0 0;
+  padding: 16px 16px calc(16px + env(safe-area-inset-bottom));
+  box-sizing: border-box;
+  animation: sheet-up .22s ease-out;
+}
+@media (min-width: 540px) {
+  .modal-overlay { align-items: center; }
+  .modal-sheet { border-radius: 20px; max-height: 80vh; }
+}
+@keyframes sheet-up {
+  from { transform: translateY(24px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.modal-header strong {
+  font-size: 16px;
+  font-weight: 700;
+}
+.modal-close {
+  background: var(--fill-secondary);
+  color: var(--label-secondary);
+  border-radius: 50%;
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.decided-banner {
+  display: none;
+  background: rgba(52, 199, 89, .12);
+  color: var(--green, #34C759);
+  border-radius: 12px;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  font-weight: 500;
+}
+.decided-banner strong { font-weight: 700; }
+.decided-banner .hint { color: var(--green, #34C759); opacity: .8; }
+
+.chart-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 6px;
+}
+.chart-actions button {
+  padding: 7px 14px;
+  font-size: 12.5px;
+  min-height: 32px;
+}
+
+.history-table-wrap {
+  margin-top: 12px;
+  max-height: 240px;
+  -webkit-overflow-scrolling: touch;
+  box-shadow: none;
+  border: 0.5px solid var(--separator);
+}
+
+/* --- 設定頁 iOS 分組列表 --- */
+.ios-list-header {
+  font-size: 12.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .4px;
+  color: var(--label-secondary);
+  margin: 22px 4px 8px;
+}
+.ios-list-header:first-child { margin-top: 4px; }
+
+.ios-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 16px;
+  min-height: 44px;
+  box-sizing: border-box;
+  border-bottom: 0.5px solid var(--separator);
+}
+.ios-row:last-child { border-bottom: none; }
+.ios-row > label:first-child {
+  font-size: 15px;
+  color: var(--label);
+  flex-shrink: 0;
+}
+.ios-row.column {
+  flex-direction: column;
+  align-items: stretch;
+}
+.ios-row.column > label:first-child { margin-bottom: 6px; }
+
+.ios-row input[type="text"],
+.ios-row input[type="password"],
+.ios-row input[type="number"],
+.ios-row input[type="email"] {
+  border: none;
+  background: transparent;
+  text-align: right;
+  font-size: 15px;
+  color: var(--label);
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  font-family: inherit;
+}
+.ios-row.column input {
+  text-align: left;
+  background: var(--fill-secondary);
+  border-radius: 10px;
+  padding: 9px 10px;
+}
+.ios-row input:focus { outline: none; }
+.ios-row input::placeholder { color: var(--label-secondary); }
+
+/* 小時 + 分鐘同時輸入的時間欄位（例如「2 小時 30 分」）——放在 .ios-row.column
+   底下自成一行，不用跟很長的 label 擠同一行，數字欄位也要有明顯的框，
+   不然使用者分不出哪裡是可以點的輸入框、哪裡只是單位文字。 */
+.unit-input-group {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.unit-input-group input[type="number"] {
+  flex: 0 0 56px;
+  width: 56px;
+  text-align: center;
+  background: var(--fill-secondary);
+  border-radius: 8px;
+  padding: 8px 4px;
+}
+.unit-input-group .unit-label {
+  flex: 0 0 auto;
+  font-size: 14px;
+  color: var(--label-secondary);
+  margin-right: 8px;
+}
+
+/* 密碼欄位的「顯示/隱藏」切換 */
+.pw-field { position: relative; display: block; width: 100%; }
+.pw-field input {
+  width: 100%;
+  box-sizing: border-box;
+  padding-right: 52px !important;
+}
+.pw-toggle {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 4px 8px;
+  font-size: 13px;
+  color: var(--accent);
+  cursor: pointer;
+}
+.pw-toggle:focus { outline: none; }
+
+/* iOS 開關 */
+.ios-switch {
+  position: relative;
+  display: inline-block;
+  width: 51px;
+  height: 31px;
+  flex-shrink: 0;
+}
+.ios-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+  position: absolute;
+}
+.ios-switch-track {
+  position: absolute;
+  inset: 0;
+  background: var(--fill-secondary);
+  border-radius: 999px;
+  transition: background .18s ease;
+  cursor: pointer;
+}
+.ios-switch-track::before {
+  content: "";
+  position: absolute;
+  width: 27px;
+  height: 27px;
+  left: 2px;
+  top: 2px;
+  background: #fff;
+  border-radius: 50%;
+  box-shadow: 0 3px 8px rgba(0,0,0,.15), 0 1px 1px rgba(0,0,0,.08);
+  transition: transform .18s ease;
+}
+.ios-switch input:checked + .ios-switch-track {
+  background: var(--green);
+}
+.ios-switch input:checked + .ios-switch-track::before {
+  transform: translateX(20px);
+}
+
+.hint {
+  font-size: 12.5px;
+  color: var(--label-secondary);
+  line-height: 1.6;
+  margin: 8px 4px 0;
+}
+.hint a { color: var(--accent); text-decoration: none; }
+.hint code {
+  background: var(--fill-secondary);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.ios-btn-block {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: center;
+  padding: 14px;
+  border-radius: 14px;
+  font-size: 16px;
+  font-weight: 600;
+  margin-top: 12px;
+  border: none;
+  cursor: pointer;
+  font-family: inherit;
+}
+.ios-btn-block.primary { background: var(--accent); color: #fff; }
+.ios-btn-block.secondary { background: var(--accent-tint); color: var(--accent); }
+.ios-btn-block:active { opacity: .7; }
+
+.status-msg {
+  font-size: 13px;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  display: none;
+  font-weight: 500;
+  text-align: center;
+}
+.status-msg.ok { display: block; background: var(--accent-tint); color: var(--accent); }
+.status-msg.err { display: block; background: var(--red-tint); color: var(--red); }

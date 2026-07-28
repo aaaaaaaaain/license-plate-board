@@ -1,0 +1,463 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<title>出價歷史查詢 - 台灣監理站車牌競標即時看板</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>出價歷史查詢</h1>
+    <div class="meta">依監理站、車種、日期、號碼篩選，查看每個號碼的出價走勢或決標紀錄</div>
+  </div>
+  <nav><a href="/">← 返回看板</a> {% if logged_in %}<span class="nav-username">{{ username }}</span> <a href="/logout">登出</a>{% else %}<a href="/login">登入</a>{% endif %}</nav>
+</header>
+
+<div class="container">
+
+<div class="toolbar">
+  <div class="filter-row">
+    <select id="stationFilter">
+      <option value="">全部監理站</option>
+    </select>
+    <select id="categoryFilter">
+      <option value="">全部車種</option>
+    </select>
+    <select id="dateFilter">
+      <option value="">全部日期</option>
+    </select>
+    <input type="text" id="numberFilter" placeholder="輸入號碼篩選，例如：8888">
+    <select id="viewModeFilter">
+      <option value="active">追蹤中／曾出現過的號碼</option>
+      <option value="decided">已決標紀錄</option>
+    </select>
+  </div>
+</div>
+
+<div class="ios-list-header">決標統計</div>
+<div class="panel" id="statsPanel">
+  <div id="statsSummary" class="hint"></div>
+  <div id="statsChart"></div>
+</div>
+
+<div class="ios-list-header" id="listHeader">追蹤中 / 曾出現過的號碼</div>
+<div class="ios-list-group" id="numberList"></div>
+<div id="pagination" class="pagination-row"></div>
+
+</div>
+
+<div id="historyModal" class="modal-overlay">
+  <div class="modal-sheet">
+    <div class="modal-header">
+      <strong id="historyTitle"></strong>
+      <button type="button" id="historyClose" class="modal-close" aria-label="關閉">✕</button>
+    </div>
+    <div id="historyDecidedBanner" class="decided-banner"></div>
+    <div id="historyChart"></div>
+    <div class="chart-actions">
+      <button type="button" id="historyScreenshotBtn">📷 截圖</button>
+    </div>
+    <div id="historyTableWrap" class="table-wrap history-table-wrap"></div>
+  </div>
+</div>
+
+<script src="/static/history-modal.js"></script>
+<script>
+let allItems = [];
+let decidedItems = [];
+
+function currentMode() {
+  return document.getElementById('viewModeFilter').value;
+}
+
+function currentDataset() {
+  return currentMode() === 'decided' ? decidedItems : allItems;
+}
+
+// 「追蹤中／曾出現過」這份清單本來就包含已經決標的號碼，但原本畫出來跟還在
+// 競標中的完全一樣（一樣的價格、一樣的「查看趨勢」），看起來像是還可以出價——
+// 實際上四筆裡就有一筆早就結標了。這裡把已決標的標出來，價格也改成決標色。
+let decidedMap = new Map();
+
+function buildDecidedMap() {
+  decidedMap = new Map();
+  for (const d of decidedItems) {
+    const k = `${d.number_key}|${d.category}|${d.section}|${d.station}`;
+    const prev = decidedMap.get(k);
+    if (!prev || (d.decided_at || '') > (prev.decided_at || '')) decidedMap.set(k, d);
+  }
+}
+
+function decidedFor(it) {
+  const d = decidedMap.get(`${it.number_key}|${it.category}|${it.section}|${it.station}`);
+  if (!d) return null;
+  // 決標後又重新上架、已經有更新的出價紀錄的話就不算已決標
+  // （跟後端 get_plate_history 判斷「有沒有更新的活動」是同一條規則）
+  if (it.last_seen && d.decided_at && it.last_seen > d.decided_at) return null;
+  return d;
+}
+
+function renderActiveRow(it) {
+  const decided = decidedFor(it);
+  const priceColor = decided ? 'var(--green, #34C759)' : 'var(--accent)';
+  const tail = decided ? '✅ 已決標' : '📈 查看趨勢';
+  const when = decided
+    ? `決標 ${decided.decided_at ? decided.decided_at.replace('T', ' ') : '-'}`
+    : `最後 ${it.last_seen ? it.last_seen.replace('T', ' ') : '-'}`;
+  return `
+    <div class="ios-row number-row" data-plate="${it.plate}" data-category="${it.category}" data-section="${it.section}" data-station="${it.station}">
+      <div>
+        <div style="font-weight:600;">號碼 ${it.number_key}　<span class="hint" style="display:inline;">${it.category}</span></div>
+        <div class="hint" style="margin:2px 0 0;">
+          ${it.plate} · ${it.section} ${it.station} · ${it.points} 筆紀錄 · ${when}
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        <div style="font-weight:600;color:${priceColor};">${it.price} 元</div>
+        <div class="hint">${tail}</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderDecidedRow(it) {
+  return `
+    <div class="ios-row number-row" data-plate="${it.number_key}" data-category="${it.category}" data-section="${it.section}" data-station="${it.station}">
+      <div>
+        <div style="font-weight:600;">號碼 ${it.number_key}　<span class="hint" style="display:inline;">${it.category}</span></div>
+        <div class="hint" style="margin:2px 0 0;">
+          ${it.section} ${it.station} · 決標時間 ${it.decided_at ? it.decided_at.replace('T', ' ') : '-'}
+        </div>
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        <div style="font-weight:600;color:var(--green, #34C759);">${it.final_price} 元</div>
+        <div class="hint">✅ 已決標</div>
+      </div>
+    </div>
+  `;
+}
+
+let currentPage = 1;
+const PAGE_SIZE = 10;
+
+function renderPagination(total, totalPages) {
+  const el = document.getElementById('pagination');
+  if (total === 0) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `
+    <button type="button" id="prevPage" ${currentPage <= 1 ? 'disabled' : ''}>‹ 上一頁</button>
+    <span class="page-info">第 ${currentPage} / ${totalPages} 頁・共 ${total} 筆</span>
+    <button type="button" id="nextPage" ${currentPage >= totalPages ? 'disabled' : ''}>下一頁 ›</button>
+  `;
+  document.getElementById('prevPage').addEventListener('click', () => {
+    currentPage--;
+    renderList();
+  });
+  document.getElementById('nextPage').addEventListener('click', () => {
+    currentPage++;
+    renderList();
+  });
+}
+
+// 號碼篩選：決標紀錄只有數字（不含字首字母），追蹤中的還有完整號牌，
+// 所以兩個欄位都比對——打「8888」兩種模式都找得到，打「PJY」也還能在
+// 追蹤中的清單裡找到那一面。
+function matchesNumber(it, keyword) {
+  if (!keyword) return true;
+  return (it.number_key || '').includes(keyword) || (it.plate || '').includes(keyword);
+}
+
+function renderList() {
+  const station = document.getElementById('stationFilter').value;
+  const category = document.getElementById('categoryFilter').value;
+  const date = document.getElementById('dateFilter').value;
+  const number = document.getElementById('numberFilter').value.trim();
+  const mode = currentMode();
+  const dataset = currentDataset();
+  const list = document.getElementById('numberList');
+
+  document.getElementById('listHeader').textContent =
+    mode === 'decided' ? '已決標紀錄' : '追蹤中 / 曾出現過的號碼';
+
+  // 日期篩選：決標清單看的是決標當天；追蹤中的清單要看「那天有沒有出價紀錄」（days），
+  // 不能只看 last_seen——一面 07-26 上架、07-28 才結標的號牌，07-26 那天確實在競標，
+  // 但它的 last_seen 是 07-28，只比對 last_seen 會把它從 07-26 的結果裡漏掉。
+  const matchesDate = mode === 'decided'
+    ? it => !date || (it.decided_at || '').startsWith(date)
+    : it => !date || (it.days || []).includes(date);
+
+  const filtered = dataset.filter(it =>
+    (!station || it.station === station) &&
+    (!category || it.category === category) &&
+    matchesDate(it) &&
+    matchesNumber(it, number)
+  );
+
+  const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+  const start = (currentPage - 1) * PAGE_SIZE;
+  const pageItems = filtered.slice(start, start + PAGE_SIZE);
+
+  if (filtered.length === 0) {
+    list.innerHTML = '<div class="hint" style="text-align:center;padding:24px 0;">沒有符合條件的紀錄</div>';
+    renderPagination(0, totalPages);
+    return;
+  }
+  list.innerHTML = pageItems.map(mode === 'decided' ? renderDecidedRow : renderActiveRow).join('');
+  renderPagination(filtered.length, totalPages);
+}
+
+// 整體決標統計：不看單一號碼，把目前篩選出的（監理站／車種）所有已決標紀錄
+// 依「決標日期」分組，算出每天的平均價／筆數，畫一條整體行情走勢線。
+// 跟監理站／車種／號碼篩選連動，但跟日期篩選、追蹤/決標的檢視模式無關——
+// 這裡看的本來就是「所有日期的決標行情」，不是某一天的清單，圖的 X 軸就是日期，
+// 再被日期篩選切一次只會剩一個點。號碼篩選則相反：打「8888」看到的正是
+// 8888 歷來的決標行情，這才是大家想問的問題。
+function computeDailyStats(items) {
+  const byDay = {};
+  for (const it of items) {
+    if (!it.decided_at) continue;
+    const day = it.decided_at.slice(0, 10);
+    const price = Number(it.final_price) || 0;
+    if (!byDay[day]) byDay[day] = { day, count: 0, sum: 0, min: price, max: price };
+    const d = byDay[day];
+    d.count += 1;
+    d.sum += price;
+    d.min = Math.min(d.min, price);
+    d.max = Math.max(d.max, price);
+  }
+  return Object.values(byDay)
+    .map(d => ({ day: d.day, count: d.count, avg: Math.round(d.sum / d.count), min: d.min, max: d.max }))
+    .sort((a, b) => a.day.localeCompare(b.day));
+}
+
+function fmtMoney(n) {
+  return Number(n).toLocaleString('zh-TW');
+}
+
+// 只有一天決標紀錄時，折線圖只有一個點——連不成線、也看不出走勢，圖形本身沒有意義。
+// 這種情況改畫「當天的價格分布」：最低到最高的區間帶，平均值標在它實際落點上，
+// 這才是一天份資料真正能回答的問題（今天的行情大概落在哪）。
+function renderStatsRange(container, s) {
+  const span = (s.max - s.min) || 1;
+  const pos = Math.min(100, Math.max(0, ((s.avg - s.min) / span) * 100));
+  // 平均值剛好貼在最左或最右時，置中的標籤會被切掉，改成靠邊對齊
+  const shift = pos < 12 ? 'translateX(0)' : pos > 88 ? 'translateX(-100%)' : 'translateX(-50%)';
+  container.innerHTML = `
+    <div class="stats-range">
+      <div class="stats-chart-title">${s.day} 決標價分布・共 ${s.count} 面</div>
+      <div class="stats-range-bar">
+        <div class="stats-range-avg" style="left:${pos}%;"></div>
+        <div class="stats-range-avg-label" style="left:${pos}%;transform:${shift};">平均 ${fmtMoney(s.avg)}</div>
+      </div>
+      <div class="stats-range-ends">
+        <span>最低 ${fmtMoney(s.min)}</span>
+        <span>最高 ${fmtMoney(s.max)}</span>
+      </div>
+      <div class="hint" style="text-align:center;margin-top:12px;">累積兩天以上的決標紀錄後，這裡會改畫每日行情走勢</div>
+    </div>
+  `;
+}
+
+function renderStatsChart(stats) {
+  const container = document.getElementById('statsChart');
+  if (stats.length === 0) {
+    container.innerHTML = '<div class="hint" style="text-align:center;padding:24px 0;">尚無決標資料</div>';
+    return;
+  }
+  if (stats.length === 1) {
+    renderStatsRange(container, stats[0]);
+    return;
+  }
+  const width = 320, height = 160;
+  const padding = { top: 22, right: 14, bottom: 28, left: 44 };
+  const plotW = width - padding.left - padding.right;
+  const plotH = height - padding.top - padding.bottom;
+
+  const avgs = stats.map(s => s.avg);
+  const minP = Math.min(...avgs);
+  const maxP = Math.max(...avgs);
+  // 只有一天資料、或每天平均價剛好都一樣時，maxP-minP 會是 0——這時候如果只回退
+  // 成 1，格線就會擠成幾乎一樣的數字（例如 7856/7856/7855），改用價格量級的一成
+  // 當預設範圍，格線才有意義；同時把這個唯一的價格擺在圖的正中間，不然點會黏在底線上。
+  // （趨勢圖 history-modal.js 用同一套處理）
+  const flat = maxP === minP;
+  const rangeP = flat ? Math.max(Math.round(maxP * 0.1), 100) : maxP - minP;
+  const baseP = flat ? minP - rangeP / 2 : minP;
+  const n = stats.length;
+
+  const x = i => padding.left + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  const y = v => padding.top + plotH - ((v - baseP) / rangeP) * plotH;
+
+  const steps = 4;
+  let grid = '';
+  for (let s = 0; s <= steps; s++) {
+    const val = baseP + (rangeP * s / steps);
+    const yy = y(val);
+    grid += `<line x1="${padding.left}" y1="${yy}" x2="${width - padding.right}" y2="${yy}" stroke="var(--separator)" stroke-width="1"/>`;
+    grid += `<text x="${padding.left - 6}" y="${yy + 3}" font-size="9" text-anchor="end" fill="var(--label-secondary)">${Math.round(val)}</text>`;
+  }
+
+  const points = stats.map((s, i) => `${x(i)},${y(s.avg)}`).join(' ');
+  // 折線下方補一層淡色面積，線本身才不會在大片留白裡顯得單薄
+  const baseY = padding.top + plotH;
+  const area = `M${x(0)},${baseY} `
+    + stats.map((s, i) => `L${x(i)},${y(s.avg)}`).join(' ')
+    + ` L${x(n - 1)},${baseY} Z`;
+  const dots = stats.map((s, i) => {
+    const cx = x(i), cy = y(s.avg);
+    const tip = `${s.day}\n平均 ${fmtMoney(s.avg)} 元（${s.count} 面）\n最低 ${fmtMoney(s.min)}／最高 ${fmtMoney(s.max)}`;
+    return `<circle cx="${cx}" cy="${cy}" r="4" fill="var(--accent)" stroke="var(--card-bg)" stroke-width="1.5"><title>${tip}</title></circle>`;
+  }).join('');
+  // 只在最新一天標出數字——每個點都標的話字會疊在一起，反而看不清楚
+  const lastS = stats[n - 1];
+  const lastLabel = `<text x="${x(n - 1)}" y="${Math.max(y(lastS.avg) - 10, 12)}" font-size="11" font-weight="600" `
+    + `text-anchor="end" fill="var(--label)">${fmtMoney(lastS.avg)} 元</text>`;
+
+  // 資料點多的話只標頭尾跟中間，不然日期文字會疊在一起看不清楚
+  const labelIdxs = n <= 6 ? stats.map((_, i) => i) : [0, Math.floor((n - 1) / 2), n - 1];
+  const xLabels = labelIdxs.map(i => {
+    const short = stats[i].day.slice(5); // 只顯示 MM-DD
+    return `<text x="${x(i)}" y="${height - 8}" font-size="9" text-anchor="middle" fill="var(--label-secondary)">${short}</text>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="stats-chart-wrap">
+      <div class="stats-chart-title">每日平均決標價・${n} 天</div>
+      <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;display:block;overflow:visible;">
+        ${grid}
+        <path d="${area}" fill="var(--accent-tint)"/>
+        <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+        ${dots}
+        ${lastLabel}
+        ${xLabels}
+      </svg>
+    </div>
+  `;
+}
+
+// 這四個數字本來擠成一行灰色小字，跟旁邊的說明文字長得一樣，等於沒有重點。
+// 改成四塊數字磚：面板在寬螢幕上會自己攤開填滿，手機上折成兩欄。
+function renderStatsSummary(items) {
+  const el = document.getElementById('statsSummary');
+  if (items.length === 0) {
+    el.className = 'hint';
+    el.innerHTML = '目前篩選條件下尚無決標紀錄';
+    return;
+  }
+  const prices = items.map(it => Number(it.final_price) || 0);
+  const total = items.length;
+  const avg = Math.round(prices.reduce((a, b) => a + b, 0) / total);
+  const tiles = [
+    { label: '已決標', value: fmtMoney(total), unit: '面' },
+    { label: '平均', value: fmtMoney(avg), unit: '元' },
+    { label: '最高', value: fmtMoney(Math.max(...prices)), unit: '元' },
+    { label: '最低', value: fmtMoney(Math.min(...prices)), unit: '元' },
+  ];
+  el.className = 'stat-tiles';
+  el.innerHTML = tiles.map(t => `
+    <div class="stat-tile">
+      <div class="stat-label">${t.label}</div>
+      <div class="stat-value">${t.value}<span class="stat-unit">${t.unit}</span></div>
+    </div>
+  `).join('');
+}
+
+function renderStats() {
+  const station = document.getElementById('stationFilter').value;
+  const category = document.getElementById('categoryFilter').value;
+  const number = document.getElementById('numberFilter').value.trim();
+  const filtered = decidedItems.filter(it =>
+    (!station || it.station === station) &&
+    (!category || it.category === category) &&
+    matchesNumber(it, number)
+  );
+  const stats = computeDailyStats(filtered);
+  renderStatsSummary(filtered);
+  renderStatsChart(stats);
+}
+
+function populateFilters() {
+  const combined = [...allItems, ...decidedItems];
+  const stations = [...new Set(combined.map(i => i.station))].sort();
+  const categories = [...new Set(combined.map(i => i.category))].sort();
+  // 用每面號牌實際有紀錄的所有日期（days），不是只有最後一次更新那天——
+  // 不然某些「當天有在競標、但之後才結標」的日期根本不會出現在選單裡。
+  const dates = [...new Set([
+    ...allItems.flatMap(i => i.days || []),
+    ...decidedItems.map(i => i.decided_at ? i.decided_at.slice(0, 10) : null),
+  ].filter(Boolean))].sort().reverse();
+
+  const stationSel = document.getElementById('stationFilter');
+  const categorySel = document.getElementById('categoryFilter');
+  const dateSel = document.getElementById('dateFilter');
+  stationSel.innerHTML = '<option value="">全部監理站</option>';
+  categorySel.innerHTML = '<option value="">全部車種</option>';
+  dateSel.innerHTML = '<option value="">全部日期</option>';
+  for (const s of stations) {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = s;
+    stationSel.appendChild(opt);
+  }
+  for (const c of categories) {
+    const opt = document.createElement('option');
+    opt.value = c;
+    opt.textContent = c;
+    categorySel.appendChild(opt);
+  }
+  for (const d of dates) {
+    const opt = document.createElement('option');
+    opt.value = d;
+    opt.textContent = d;
+    dateSel.appendChild(opt);
+  }
+}
+
+async function loadList() {
+  const list = document.getElementById('numberList');
+  list.innerHTML = '<div class="hint" style="text-align:center;padding:24px 0;">載入中...</div>';
+  try {
+    const [resp1, resp2] = await Promise.all([
+      fetch('/api/history-list'),
+      fetch('/api/decided-list'),
+    ]);
+    const data1 = await resp1.json();
+    const data2 = await resp2.json();
+    allItems = data1.items || [];
+    decidedItems = data2.items || [];
+    buildDecidedMap();
+    populateFilters();
+    renderList();
+    renderStats();
+  } catch (e) {
+    list.innerHTML = '<div class="hint" style="text-align:center;padding:24px 0;">載入失敗</div>';
+  }
+}
+
+document.getElementById('numberList').addEventListener('click', (e) => {
+  const row = e.target.closest('.number-row');
+  if (row) openHistory(row.dataset.plate, row.dataset.category, row.dataset.section, row.dataset.station);
+});
+document.getElementById('stationFilter').addEventListener('change', () => { currentPage = 1; renderList(); renderStats(); });
+document.getElementById('categoryFilter').addEventListener('change', () => { currentPage = 1; renderList(); renderStats(); });
+document.getElementById('dateFilter').addEventListener('change', () => { currentPage = 1; renderList(); });
+document.getElementById('numberFilter').addEventListener('input', () => { currentPage = 1; renderList(); renderStats(); });
+document.getElementById('viewModeFilter').addEventListener('change', () => { currentPage = 1; renderList(); });
+
+initHistoryModal();
+loadList();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,512 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<title>台灣監理站車牌競標即時看板</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <div>
+  <h1>台灣監理站車牌競標即時看板</h1>
+  <div class="meta">
+    背景每 {{ scan_interval_minutes }} 分鐘自動重新掃描全國監理站 ·
+    <span id="alertThresholdText">決標前 {{ alert_before_minutes }} 分鐘內視為「即將截止」</span> ·
+    最後更新：<span id="lastUpdated">尚未更新</span>
+  </div>
+  </div>
+  <nav><a href="/history">📈 歷史查詢</a> <a href="/settings">⚙ Email / 掃描設定</a> {% if logged_in %}<span class="nav-username">{{ username }}</span> <a href="/logout">登出</a>{% else %}<a href="/login">登入</a>{% endif %}</nav>
+</header>
+
+<div class="container">
+
+<div id="urgentBanner" class="banner"><span class="dot"></span><span id="urgentBannerText"></span></div>
+
+<div class="toolbar">
+  <div><strong>篩選車種</strong>（請勾選要看的車種，沒勾就不顯示）</div>
+  <div class="cat-grid" id="catGrid">
+    {% for c in categories %}
+    <label><input type="checkbox" class="cat-checkbox" value="{{ c }}"> {{ c }}</label>
+    {% endfor %}
+  </div>
+  <div class="toolbar-buttons">
+    <button id="resetFilters">重置</button>
+    <button id="selectAll">全選</button>
+    <button id="refreshNow" class="primary">立即重新整理畫面</button>
+    <span id="scanningTag"><span class="dot"></span>背景掃描中...</span>
+  </div>
+  <div class="filter-row" style="margin-top:12px;">
+    <select id="sectionFilterSelect">
+      <option value="">全部地區</option>
+    </select>
+    <select id="stationFilterSelect">
+      <option value="">全部監理站</option>
+    </select>
+    <input type="text" id="numberFilterInput" placeholder="輸入號碼篩選，例如：8888">
+    <select id="sortSelect">
+      <option value="">預設排序</option>
+      <option value="deadline_asc">截止時間：近到遠</option>
+      <option value="deadline_desc">截止時間：遠到近</option>
+      <option value="price_desc">目前出價：高到低</option>
+      <option value="price_asc">目前出價：低到高</option>
+    </select>
+  </div>
+  {% if logged_in %}
+  <div style="margin-top:10px;">
+    <label class="watch-filter"><input type="checkbox" id="onlyWatched"> ★ 只看我的追蹤</label>
+    <span class="hint" style="display:inline;margin-left:8px;">點各列的 ☆ 可加入追蹤，截止前會寄信提醒你</span>
+  </div>
+  {% endif %}
+</div>
+
+<div class="table-wrap">
+<table>
+  <thead>
+    <tr>
+      {% if logged_in %}<th style="width:40px;">追蹤</th>{% endif %}
+      <th>轄區</th><th>監理站</th><th>號牌</th><th>類別</th>
+      <th>底價</th><th>目前出價</th><th>出價次數</th><th>決標時間</th><th>剩餘時間</th><th>趨勢</th>
+    </tr>
+  </thead>
+  <tbody id="tableBody">
+    <tr class="empty-row"><td colspan="11">資料載入中...</td></tr>
+  </tbody>
+</table>
+</div>
+
+<div id="pagination" class="pagination-row"></div>
+
+</div>
+
+<div id="historyModal" class="modal-overlay">
+  <div class="modal-sheet">
+    <div class="modal-header">
+      <strong id="historyTitle"></strong>
+      <button type="button" id="historyClose" class="modal-close" aria-label="關閉">✕</button>
+    </div>
+    <div id="historyDecidedBanner" class="decided-banner"></div>
+    <div id="historyChart"></div>
+    <div class="chart-actions">
+      <button type="button" id="historyScreenshotBtn">📷 截圖</button>
+    </div>
+    <div id="historyTableWrap" class="table-wrap history-table-wrap"></div>
+  </div>
+</div>
+
+<script src="/static/history-modal.js"></script>
+<script>
+let latestData = { results: [] };
+
+const LOGGED_IN = {{ 'true' if logged_in else 'false' }};
+const COL_COUNT = LOGGED_IN ? 11 : 10;
+
+// 「即將截止」門檻：登入帳號可以在設定頁自訂自己的門檻，沒登入或沒自訂就用全站預設值
+// （{{ alert_before_minutes }} 分鐘，來自後端 config.json，跟未登入訪客看到的一致）。
+const SITE_DEFAULT_ALERT_BEFORE_MINUTES = {{ alert_before_minutes }};
+let myAlertBeforeMinutes = null;
+
+function effectiveAlertBeforeMinutes() {
+  return myAlertBeforeMinutes || SITE_DEFAULT_ALERT_BEFORE_MINUTES;
+}
+function isUrgent(p) {
+  if (p.seconds_left === null || p.seconds_left === undefined) return false;
+  return p.seconds_left >= 0 && p.seconds_left <= effectiveAlertBeforeMinutes() * 60;
+}
+function formatMinutesFriendly(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h > 0 && m > 0) return `${h} 小時 ${m} 分`;
+  if (h > 0) return `${h} 小時`;
+  return `${m} 分鐘`;
+}
+async function loadMyAlertThreshold() {
+  if (!LOGGED_IN) return;
+  try {
+    const resp = await fetch('/api/my-settings');
+    if (!resp.ok) return;
+    const d = await resp.json();
+    myAlertBeforeMinutes = d.alert_before_minutes || null;
+    document.getElementById('alertThresholdText').textContent =
+      `決標前 ${formatMinutesFriendly(effectiveAlertBeforeMinutes())} 內視為「即將截止」`;
+  } catch (e) {
+    console.error('讀取個人即將截止門檻失敗', e);
+  }
+}
+
+// 追蹤清單以「數字＋車種」為單位，跟後端 extract_plate_number 的規則一致：
+// 取號牌結尾的數字，這樣同一個號碼換字首重新上架也還算同一個追蹤目標。
+function numberKeyOf(plate) {
+  const m = String(plate).match(/(\d+)\s*$/);
+  return m ? m[1] : String(plate);
+}
+
+let watchSet = new Set();  // "number_key|category"
+
+async function loadWatchlist() {
+  if (!LOGGED_IN) return;
+  try {
+    const resp = await fetch('/api/watchlist');
+    if (!resp.ok) return;
+    const data = await resp.json();
+    watchSet = new Set((data.items || []).map(i => `${i.number_key}|${i.category}`));
+  } catch (e) {
+    console.error('讀取追蹤清單失敗', e);
+  }
+}
+
+async function toggleWatch(numberKey, category) {
+  const key = `${numberKey}|${category}`;
+  const watching = watchSet.has(key);
+  // 先更新畫面讓點擊有立即反應，失敗再還原
+  if (watching) watchSet.delete(key); else watchSet.add(key);
+  render();
+  try {
+    const resp = await fetch('/api/watchlist', {
+      method: watching ? 'DELETE' : 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ number_key: numberKey, category }),
+    });
+    const data = await resp.json();
+    if (!resp.ok || !data.ok) {
+      if (watching) watchSet.add(key); else watchSet.delete(key);
+      render();
+      alert(data.error || '操作失敗');
+    }
+  } catch (e) {
+    if (watching) watchSet.add(key); else watchSet.delete(key);
+    render();
+    alert('操作失敗：' + e);
+  }
+}
+
+function selectedCategories() {
+  return Array.from(document.querySelectorAll('.cat-checkbox:checked')).map(cb => cb.value);
+}
+
+function syncChipStyles() {
+  document.querySelectorAll('.cat-checkbox').forEach(cb => {
+    cb.closest('label').classList.toggle('active', cb.checked);
+  });
+}
+
+function formatRemain(seconds) {
+  if (seconds === null || seconds === undefined) return '-';
+  if (seconds < 0) return '已截止';
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d} 天 ${h} 小時`;
+  return h > 0 ? `${h} 小時 ${m} 分` : `${m} 分鐘`;
+}
+
+let allStations = []; // [{section, stations: [...]}], 全國監理站目錄
+
+function updateStationOptions() {
+  const stationSel = document.getElementById('stationFilterSelect');
+  const section = document.getElementById('sectionFilterSelect').value;
+  const current = stationSel.value;
+  const relevant = section ? allStations.filter(s => s.section === section) : allStations;
+  const stations = [...new Set(relevant.flatMap(s => s.stations))].sort();
+  stationSel.innerHTML = '<option value="">全部監理站</option>';
+  for (const s of stations) {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = s;
+    stationSel.appendChild(opt);
+  }
+  if (stations.includes(current)) stationSel.value = current;
+}
+
+async function loadStations() {
+  try {
+    const resp = await fetch('/api/stations');
+    const data = await resp.json();
+    allStations = data.sections || [];
+    const sectionSel = document.getElementById('sectionFilterSelect');
+    sectionSel.innerHTML = '<option value="">全部地區</option>';
+    for (const s of allStations) {
+      const opt = document.createElement('option');
+      opt.value = s.section;
+      opt.textContent = s.section;
+      sectionSel.appendChild(opt);
+    }
+    updateStationOptions();
+  } catch (e) {
+    console.error('讀取監理站清單失敗', e);
+  }
+}
+
+let currentPage = 1;
+// 直立式（窄螢幕，跟歷史彈窗用同一個 540px 斷點）一頁 8 筆，橫式/桌機一頁 10 筆
+function pageSize() {
+  return window.innerWidth < 540 ? 8 : 10;
+}
+
+function renderPagination(total, totalPages) {
+  const el = document.getElementById('pagination');
+  if (total === 0) {
+    el.innerHTML = '';
+    return;
+  }
+  el.innerHTML = `
+    <button type="button" id="prevPage" ${currentPage <= 1 ? 'disabled' : ''}>‹ 上一頁</button>
+    <span class="page-info">第 ${currentPage} / ${totalPages} 頁・共 ${total} 筆</span>
+    <button type="button" id="nextPage" ${currentPage >= totalPages ? 'disabled' : ''}>下一頁 ›</button>
+  `;
+  document.getElementById('prevPage').addEventListener('click', () => {
+    currentPage--;
+    render();
+  });
+  document.getElementById('nextPage').addEventListener('click', () => {
+    currentPage++;
+    render();
+  });
+}
+
+// 沒能解析出決標時間的號牌（seconds_left 是 null）一律排最後，不管排序方向。
+function deadlineSortValue(p) {
+  return (p.seconds_left === null || p.seconds_left === undefined) ? null : p.seconds_left;
+}
+function priceSortValue(p) {
+  return Number(p['目前出價']) || 0;
+}
+function sortMatched(matched, mode) {
+  if (!mode) return;  // 預設排序：維持原本掃描順序，不做任何調整
+  const comparators = {
+    deadline_asc: (a, b) => {
+      const av = deadlineSortValue(a.p), bv = deadlineSortValue(b.p);
+      if (av === null) return bv === null ? 0 : 1;
+      if (bv === null) return -1;
+      return av - bv;
+    },
+    deadline_desc: (a, b) => {
+      const av = deadlineSortValue(a.p), bv = deadlineSortValue(b.p);
+      if (av === null) return bv === null ? 0 : 1;
+      if (bv === null) return -1;
+      return bv - av;
+    },
+    price_asc: (a, b) => priceSortValue(a.p) - priceSortValue(b.p),
+    price_desc: (a, b) => priceSortValue(b.p) - priceSortValue(a.p),
+  };
+  matched.sort(comparators[mode]);
+}
+
+function render() {
+  const selected = selectedCategories();
+  const sectionFilter = document.getElementById('sectionFilterSelect').value;
+  const stationFilter = document.getElementById('stationFilterSelect').value;
+  const numberFilter = document.getElementById('numberFilterInput').value.trim();
+  const onlyWatchedEl = document.getElementById('onlyWatched');
+  const onlyWatched = !!(onlyWatchedEl && onlyWatchedEl.checked);
+  let urgentItems = [];
+
+  const matched = [];
+  for (const station of latestData.results) {
+    if (sectionFilter && station.section !== sectionFilter) continue;
+    if (stationFilter && station.station !== stationFilter) continue;
+    for (const p of station.plates) {
+      // 沒勾任何車種就是什麼都不顯示（不是等於全選）——一進頁面就是這個狀態，
+      // 由使用者自己勾要看的車種
+      if (!selected.includes(p['號牌類別'])) continue;
+      if (numberFilter && !p['號牌'].includes(numberFilter)) continue;
+      if (onlyWatched && !watchSet.has(`${numberKeyOf(p['號牌'])}|${p['號牌類別']}`)) continue;
+      if (isUrgent(p)) {
+        urgentItems.push(`${station.section} ${station.station} ${p['號牌']}（剩 ${formatRemain(p.seconds_left)}）`);
+      }
+      matched.push({ station, p });
+    }
+  }
+
+  sortMatched(matched, document.getElementById('sortSelect').value);
+
+  const size = pageSize();
+  const totalPages = Math.max(1, Math.ceil(matched.length / size));
+  if (currentPage > totalPages) currentPage = totalPages;
+  if (currentPage < 1) currentPage = 1;
+  const start = (currentPage - 1) * size;
+  const pageItems = matched.slice(start, start + size);
+
+  const tbody = document.getElementById('tableBody');
+  tbody.innerHTML = '';
+  for (const { station, p } of pageItems) {
+    const tr = document.createElement('tr');
+    if (isUrgent(p)) tr.className = 'urgent';
+    const nk = numberKeyOf(p['號牌']);
+    const watching = watchSet.has(`${nk}|${p['號牌類別']}`);
+    const watchCell = LOGGED_IN
+      ? `<td><button type="button" class="watch-btn${watching ? ' on' : ''}" data-number="${nk}" data-category="${p['號牌類別']}" aria-label="${watching ? '取消追蹤' : '加入追蹤'}">${watching ? '★' : '☆'}</button></td>`
+      : '';
+    tr.innerHTML = `
+      ${watchCell}
+      <td>${station.section}</td>
+      <td>${station.station}</td>
+      <td>${p['號牌']}</td>
+      <td>${p['號牌類別']}</td>
+      <td>${p['底價']}</td>
+      <td>${p['目前出價']}</td>
+      <td>${p['出價次數']}</td>
+      <td>${p['決標時間']}</td>
+      <td class="remain">${formatRemain(p.seconds_left)}</td>
+      <td><button type="button" class="hist-btn" data-plate="${p['號牌']}" data-category="${p['號牌類別']}" data-section="${station.section}" data-station="${station.station}" aria-label="查看歷史">📈</button></td>
+    `;
+    tbody.appendChild(tr);
+  }
+
+  if (matched.length === 0) {
+    const msg = selected.length === 0
+      ? '請先在上方勾選要看的車種'
+      : (onlyWatched ? '你的追蹤清單裡目前沒有競標中的號碼' : '所選車種目前未競標中');
+    tbody.innerHTML = `<tr class="empty-row"><td colspan="${COL_COUNT}">${msg}</td></tr>`;
+  }
+
+  renderPagination(matched.length, totalPages);
+
+  const banner = document.getElementById('urgentBanner');
+  if (urgentItems.length > 0) {
+    banner.classList.add('show');
+    document.getElementById('urgentBannerText').textContent =
+      `${urgentItems.length} 面號牌即將於 ${formatMinutesFriendly(effectiveAlertBeforeMinutes())} 內截止：` + urgentItems.join('、');
+  } else {
+    banner.classList.remove('show');
+  }
+}
+
+async function fetchData() {
+  try {
+    const resp = await fetch('/api/data');
+    const data = await resp.json();
+    latestData = data;
+    document.getElementById('lastUpdated').textContent = data.last_updated || '尚未更新';
+    document.getElementById('scanningTag').style.display = data.scanning ? 'inline-flex' : 'none';
+    render();
+  } catch (e) {
+    console.error('讀取資料失敗', e);
+  }
+}
+
+document.getElementById('selectAll').addEventListener('click', () => {
+  document.querySelectorAll('.cat-checkbox').forEach(cb => cb.checked = true);
+  syncChipStyles();
+  currentPage = 1;
+  render();
+});
+// 「重置」＝整排篩選條件回到剛進頁面的狀態：車種全不勾（＝全部車種）、地區／監理站／
+// 號碼／排序清空、取消「只看我的追蹤」。原本這顆按鈕叫「預設」，做的是把車種還原成
+// 自用小客貨車——現在預設就是全不勾，還原成單一車種已經不是「預設」了。
+document.getElementById('resetFilters').addEventListener('click', () => {
+  document.querySelectorAll('.cat-checkbox').forEach(cb => cb.checked = false);
+  document.getElementById('sectionFilterSelect').value = '';
+  updateStationOptions();
+  document.getElementById('stationFilterSelect').value = '';
+  document.getElementById('numberFilterInput').value = '';
+  document.getElementById('sortSelect').value = '';
+  const onlyWatchedEl = document.getElementById('onlyWatched');
+  if (onlyWatchedEl) onlyWatchedEl.checked = false;
+  syncChipStyles();
+  currentPage = 1;
+  render();
+});
+document.getElementById('refreshNow').addEventListener('click', async () => {
+  const btn = document.getElementById('refreshNow');
+  const originalText = btn.textContent;
+  const baselineUpdated = latestData.last_updated;
+  btn.disabled = true;
+  btn.textContent = '重新掃描中...';
+  try {
+    const resp = await fetch('/api/scan-now', { method: 'POST' });
+    const result = await resp.json();
+    if (!resp.ok || !result.ok) {
+      alert(result.error || '無法立即重新掃描，請稍後再試');
+      return;
+    }
+    // 輪詢到這一輪掃描真的跑完（last_updated 換了新的、且不再是 scanning 狀態）為止，
+    // 最多等 90 秒；逾時就沿用當下拿到的資料，不當成錯誤。
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 1500));
+      const d = await (await fetch('/api/data')).json();
+      if (!d.scanning && d.last_updated !== baselineUpdated) {
+        latestData = d;
+        break;
+      }
+    }
+    document.getElementById('lastUpdated').textContent = latestData.last_updated || '尚未更新';
+    render();
+  } catch (e) {
+    console.error('立即重新掃描失敗', e);
+    alert('立即重新掃描失敗：' + e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+});
+document.getElementById('catGrid').addEventListener('change', () => {
+  // 全部取消是允許的狀態＝不篩車種、全部都看（原本這裡會強制把最後一個勾回去，
+  // 那樣一進頁面就不勾任何車種的預設值也永遠回不去）
+  syncChipStyles();
+  currentPage = 1;
+  render();
+});
+
+document.getElementById('sectionFilterSelect').addEventListener('change', () => {
+  updateStationOptions();
+  currentPage = 1;
+  render();
+});
+document.getElementById('stationFilterSelect').addEventListener('change', () => {
+  currentPage = 1;
+  render();
+});
+document.getElementById('numberFilterInput').addEventListener('input', () => {
+  currentPage = 1;
+  render();
+});
+document.getElementById('sortSelect').addEventListener('change', () => {
+  currentPage = 1;
+  render();
+});
+document.getElementById('tableBody').addEventListener('click', (e) => {
+  const watchBtn = e.target.closest('.watch-btn');
+  if (watchBtn) {
+    toggleWatch(watchBtn.dataset.number, watchBtn.dataset.category);
+    return;
+  }
+  const btn = e.target.closest('.hist-btn');
+  if (btn) openHistory(btn.dataset.plate, btn.dataset.category, btn.dataset.section, btn.dataset.station);
+});
+
+const onlyWatchedBox = document.getElementById('onlyWatched');
+if (onlyWatchedBox) {
+  onlyWatchedBox.addEventListener('change', () => {
+    currentPage = 1;
+    render();
+  });
+}
+
+initHistoryModal();
+
+syncChipStyles();
+// 先把追蹤清單、個人即將截止門檻讀進來再畫第一次表格，否則星號／急件標記會先閃一次
+// 預設值再變成正確的個人化結果
+Promise.all([loadWatchlist(), loadMyAlertThreshold()]).then(fetchData);
+loadStations();
+setInterval(fetchData, 30000);
+
+// 轉方向（直立/橫式切換）時，一頁筆數要跟著馬上變，不用等下一次自動整理。
+// resize 跟 orientationchange 都接，因為部分手機瀏覽器轉向時只會確實觸發其中一個。
+let resizeTimer = null;
+function scheduleRerender() {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(render, 150);
+}
+window.addEventListener('resize', scheduleRerender);
+window.addEventListener('orientationchange', scheduleRerender);
+</script>
+
+</body>
+</html>

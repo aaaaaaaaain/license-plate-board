@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<title>設定 - 台灣監理站車牌競標即時看板</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>掃描與 Email 通知設定</h1>
+    <div class="meta">設定會儲存到伺服器上的 config.json（僅存在你自己的電腦）</div>
+  </div>
+  <nav><a href="/">← 返回看板</a> <span class="nav-username">{{ username }}</span> <a href="/logout">登出</a></nav>
+</header>
+
+<div class="container">
+
+<div class="ios-list-header">我的通知設定</div>
+<div class="ios-list-group">
+  <div class="ios-row">
+    <label for="myNotifyEnabled">接收我追蹤號碼的提醒</label>
+    <label class="ios-switch">
+      <input type="checkbox" id="myNotifyEnabled">
+      <span class="ios-switch-track"></span>
+    </label>
+  </div>
+  <div class="ios-row">
+    <label for="myBroadcastEnabled">接收全站廣播（所有即將截止的號碼）</label>
+    <label class="ios-switch">
+      <input type="checkbox" id="myBroadcastEnabled">
+      <span class="ios-switch-track"></span>
+    </label>
+  </div>
+  <div class="ios-row column">
+    <label for="myEmail">我的通知信箱</label>
+    <input type="email" id="myEmail" placeholder="you@example.com" autocomplete="email">
+  </div>
+  <div class="ios-row column">
+    <label for="myAlertBeforeHours">我的即將截止門檻（留空用全站預設）</label>
+    <div class="unit-input-group">
+      <input type="number" id="myAlertBeforeHours" min="0" placeholder="0"><span class="unit-label">小時</span>
+      <input type="number" id="myAlertBeforeMinutes" min="0" max="59" placeholder="0"><span class="unit-label">分</span>
+    </div>
+  </div>
+</div>
+<div class="hint">
+  這是只屬於你的設定，不會影響其他人，兩個開關都是用這同一個信箱收信：<br>
+  ・「接收我追蹤號碼的提醒」只會通知你在看板上用 ☆ 收藏的號碼。<br>
+  ・「接收全站廣播」會通知<strong>所有</strong>即將截止的號碼，跟追蹤清單無關。<br>
+  兩者都是用「我的即將截止門檻」判斷要不要寄——留空就跟著全站預設值走，
+  現在是<span id="myAlertBeforeDefaultHint">…</span>。<br>
+  會分兩次提醒：剩餘時間跌破門檻先寄一次，跌破門檻的一半再寄一次最後提醒
+  （例如門檻設 1 小時，就是決標前 1 小時寄一次、決標前 30 分再寄一次），
+  每個階段只會寄一次，不會每次背景掃描都重複寄。
+</div>
+<button type="button" id="saveMyBtn" class="ios-btn-block primary">儲存我的通知設定</button>
+<button type="button" id="myTestBtn" class="ios-btn-block secondary">📧 寄測試郵件到我的信箱</button>
+<div id="myStatusMsg" class="status-msg"></div>
+
+<form id="settingsForm" onsubmit="return false;">
+
+  {% if is_super %}
+  <div class="ios-list-header">掃描設定（僅超級帳號可見）</div>
+  <div class="ios-list-group">
+    <div class="ios-row">
+      <label for="scanInterval">背景掃描間隔（分鐘）</label>
+      <input type="number" id="scanInterval" min="1" value="{{ config.scan_interval_minutes }}">
+    </div>
+    <div class="ios-row column">
+      <label for="alertBeforeHours">決標前多久算「即將截止」（全站預設）</label>
+      <div class="unit-input-group">
+        <input type="number" id="alertBeforeHours" min="0" placeholder="0"><span class="unit-label">小時</span>
+        <input type="number" id="alertBeforeMinutes" min="0" max="59" placeholder="0"><span class="unit-label">分</span>
+      </div>
+    </div>
+  </div>
+  <div class="hint">
+    這是沒有自訂門檻的帳號（含未登入訪客）看到的預設值。一般帳號調整自己的門檻，
+    請到上面「我的通知設定」。
+  </div>
+  {% endif %}
+
+  {% if is_super %}
+  <div class="ios-list-header">Email 寄件設定（全站共用）</div>
+  <div class="ios-list-group">
+    <div class="ios-row">
+      <label for="emailEnabled">啟用 Email 通知</label>
+      <label class="ios-switch">
+        <input type="checkbox" id="emailEnabled" {% if config.email.enabled %}checked{% endif %}>
+        <span class="ios-switch-track"></span>
+      </label>
+    </div>
+    <div class="ios-row">
+      <label for="smtpHost">SMTP 主機</label>
+      <input type="text" id="smtpHost" value="{{ config.email.smtp_host }}" placeholder="smtp.gmail.com">
+    </div>
+    <div class="ios-row">
+      <label for="smtpPort">SMTP 連接埠</label>
+      <input type="number" id="smtpPort" value="{{ config.email.smtp_port }}" placeholder="587">
+    </div>
+    <div class="ios-row">
+      <label for="username">寄件帳號</label>
+      <input type="text" id="username" value="{{ config.email.username }}" placeholder="you@gmail.com">
+    </div>
+    <div class="ios-row">
+      <label for="appPassword">應用程式密碼</label>
+      <input type="password" id="appPassword" value="{{ config.email.app_password }}" placeholder="16 碼應用程式密碼">
+    </div>
+    <div class="ios-row">
+      <label for="fromAddr">寄件人地址</label>
+      <input type="text" id="fromAddr" value="{{ config.email.from_addr }}" placeholder="you@gmail.com">
+    </div>
+    <div class="ios-row column">
+      <label for="testRecipient">測試信收件人（僅測試用，不會儲存）</label>
+      <input type="email" id="testRecipient" placeholder="you@example.com">
+    </div>
+  </div>
+  <div class="hint">
+    收件人現在改成每個帳號自己在上面「我的通知設定」裡開關，這裡的 SMTP 憑證
+    是全站共用的寄件帳號，不代表任何人會實際收到信——記得請每個需要收信的帳號
+    自己去上面設定收件信箱跟要不要收提醒。<br><br>
+    Gmail 請到
+    <a href="https://myaccount.google.com/apppasswords" target="_blank" rel="noopener">
+      myaccount.google.com/apppasswords
+    </a>
+    申請應用程式密碼（帳號需先開啟兩步驟驗證），不要用一般登入密碼。密碼會以明碼存在本機 config.json，僅供這支程式讀取寄信用。
+  </div>
+  {% endif %}
+
+  {% if is_super %}
+  <div class="ios-list-header">Discord 機器人</div>
+  <div class="ios-list-group">
+    <div class="ios-row">
+      <label for="discordEnabled">啟用 Discord 查詢機器人</label>
+      <label class="ios-switch">
+        <input type="checkbox" id="discordEnabled" {% if config.discord.enabled %}checked{% endif %}>
+        <span class="ios-switch-track"></span>
+      </label>
+    </div>
+    <div class="ios-row">
+      <label for="discordToken">Bot Token</label>
+      <input type="password" id="discordToken" value="{{ config.discord.bot_token }}" placeholder="貼上 Bot Token">
+    </div>
+    <div class="ios-row">
+      <label for="discordPrefix">指令前綴</label>
+      <input type="text" id="discordPrefix" value="{{ config.discord.command_prefix }}" placeholder="!">
+    </div>
+  </div>
+  <div class="hint">
+    去
+    <a href="https://discord.com/developers/applications" target="_blank" rel="noopener">
+      Discord Developer Portal
+    </a>
+    建立 Application → Bot，複製 Bot Token 貼在這裡；記得在 Bot 設定頁打開「MESSAGE CONTENT INTENT」，並用 OAuth2 邀請連結把機器人加進你的伺服器。可用指令：<code>!查詢 關鍵字</code>、<code>!急件</code>、<code>!狀態</code>。
+    Token 會以明碼存在本機 config.json。<strong>儲存後需要重新啟動 <code>python webapp.py</code> 機器人才會生效／換設定。</strong>
+  </div>
+  {% endif %}
+
+  <button type="button" id="saveBtn" class="ios-btn-block primary">儲存設定</button>
+  {% if is_super %}
+  <button type="button" id="testBtn" class="ios-btn-block secondary">📧 寄送測試郵件</button>
+  {% endif %}
+
+  <div id="statusMsg" class="status-msg"></div>
+</form>
+
+{% if is_super %}
+<div class="ios-list-header">帳號管理（僅超級帳號可見）</div>
+<div class="hint" style="margin:0 0 8px;"><span id="pendingCount">載入中…</span>　待審核的帳號會標色顯示在最上面，核准後對方才能登入。</div>
+<div class="ios-list-group" id="accountList"></div>
+<div class="ios-list-group" style="margin-top:10px;">
+  <div class="ios-row column">
+    <label for="newUsername">直接新增帳號（免審核）</label>
+    <input type="text" id="newUsername" placeholder="帳號">
+  </div>
+  <div class="ios-row column">
+    <label for="newEmail">Email（接收追蹤提醒用）</label>
+    <input type="email" id="newEmail" placeholder="選填">
+  </div>
+  <div class="ios-row column">
+    <label for="newPassword">密碼（至少 8 碼）</label>
+    <div class="pw-field">
+      <input type="password" id="newPassword" placeholder="密碼">
+      <button type="button" class="pw-toggle">顯示</button>
+    </div>
+  </div>
+</div>
+<button type="button" id="addAccountBtn" class="ios-btn-block secondary">新增一般帳號</button>
+<div class="hint">一般帳號可以登入、收藏追蹤號碼並接收截止提醒，但看不到也不能修改任何設定、應用程式密碼跟 Bot Token。</div>
+<div id="accountMsg" class="status-msg"></div>
+{% endif %}
+</div>
+
+<script src="/static/password-toggle.js"></script>
+<script>
+const IS_SUPER = {{ 'true' if is_super else 'false' }};
+
+// 一般帳號的頁面上根本沒有 SMTP／Discord 那些欄位，取值時要能容忍元素不存在
+function fieldVal(id, fallback) {
+  const el = document.getElementById(id);
+  return el ? el.value : fallback;
+}
+function fieldChecked(id, fallback) {
+  const el = document.getElementById(id);
+  return el ? el.checked : fallback;
+}
+
+// 「幾分鐘」的欄位改成小時＋分鐘同時輸入（例如 2 小時 30 分），方便填比較長
+// 又不是整數小時的時間，不用手動換算成 150 分鐘。統一在這裡做分鐘數的互轉。
+function minutesToHM(minutes) {
+  if (minutes === null || minutes === undefined) return { h: '', m: '' };
+  return { h: Math.floor(minutes / 60), m: minutes % 60 };
+}
+function hmToMinutes(hoursRaw, minutesRaw) {
+  const hoursBlank = hoursRaw === '' || hoursRaw === null || hoursRaw === undefined;
+  const minutesBlank = minutesRaw === '' || minutesRaw === null || minutesRaw === undefined;
+  if (hoursBlank && minutesBlank) return null;  // 兩欄都空＝不自訂，跟著預設值走
+  const total = (parseInt(hoursRaw, 10) || 0) * 60 + (parseInt(minutesRaw, 10) || 0);
+  return total > 0 ? total : null;
+}
+function setHMField(hoursId, minutesId, minutes) {
+  const parts = minutesToHM(minutes);
+  document.getElementById(hoursId).value = parts.h === '' ? '' : parts.h;
+  document.getElementById(minutesId).value = parts.m === '' ? '' : parts.m;
+}
+function getHMFieldMinutes(hoursId, minutesId) {
+  return hmToMinutes(document.getElementById(hoursId).value, document.getElementById(minutesId).value);
+}
+function formatMinutesFriendly(minutes) {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h > 0 && m > 0) return `${h} 小時 ${m} 分`;
+  if (h > 0) return `${h} 小時`;
+  return `${m} 分鐘`;
+}
+
+function collectPayload() {
+  const payload = { email: {} };
+  // 掃描間隔／全站即將截止預設值、寄件憑證、Discord 設定現在都只有超級帳號能改，
+  // 一般帳號的頁面上根本沒有這些欄位，送出的 payload 也就不含這些鍵——
+  // 後端不管收到什麼，非超級帳號一律沿用原本的值。
+  if (IS_SUPER) {
+    payload.scan_interval_minutes = parseInt(document.getElementById('scanInterval').value, 10);
+    payload.alert_before_minutes = getHMFieldMinutes('alertBeforeHours', 'alertBeforeMinutes');
+    Object.assign(payload.email, {
+      enabled: fieldChecked('emailEnabled', false),
+      smtp_host: fieldVal('smtpHost', '').trim(),
+      smtp_port: parseInt(fieldVal('smtpPort', '587'), 10) || 587,
+      username: fieldVal('username', '').trim(),
+      app_password: fieldVal('appPassword', ''),
+      from_addr: fieldVal('fromAddr', '').trim(),
+    });
+    payload.discord = {
+      enabled: fieldChecked('discordEnabled', false),
+      bot_token: fieldVal('discordToken', '').trim(),
+      command_prefix: fieldVal('discordPrefix', '!').trim() || '!',
+    };
+  }
+  return payload;
+}
+
+if (IS_SUPER) {
+  setHMField('alertBeforeHours', 'alertBeforeMinutes', {{ config.alert_before_minutes }});
+}
+
+function showStatus(ok, text) {
+  const el = document.getElementById('statusMsg');
+  el.className = 'status-msg ' + (ok ? 'ok' : 'err');
+  el.textContent = text;
+}
+
+// --- 我的通知設定（每個帳號各自獨立）---
+function showMyStatus(ok, text) {
+  const el = document.getElementById('myStatusMsg');
+  el.className = 'status-msg ' + (ok ? 'ok' : 'err');
+  el.textContent = text;
+}
+
+async function loadMySettings() {
+  try {
+    const resp = await fetch('/api/my-settings');
+    if (!resp.ok) return;
+    const d = await resp.json();
+    document.getElementById('myEmail').value = d.email || '';
+    document.getElementById('myNotifyEnabled').checked = !!d.notify_enabled;
+    document.getElementById('myBroadcastEnabled').checked = !!d.broadcast_enabled;
+    setHMField('myAlertBeforeHours', 'myAlertBeforeMinutes', d.alert_before_minutes || null);
+    document.getElementById('myAlertBeforeDefaultHint').textContent =
+      formatMinutesFriendly(d.default_alert_before_minutes);
+  } catch (e) {
+    console.error('讀取個人通知設定失敗', e);
+  }
+}
+
+document.getElementById('saveMyBtn').addEventListener('click', async () => {
+  showMyStatus(true, '儲存中...');
+  try {
+    const resp = await fetch('/api/my-settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        email: document.getElementById('myEmail').value.trim(),
+        notify_enabled: document.getElementById('myNotifyEnabled').checked,
+        broadcast_enabled: document.getElementById('myBroadcastEnabled').checked,
+        alert_before_minutes: getHMFieldMinutes('myAlertBeforeHours', 'myAlertBeforeMinutes'),
+      }),
+    });
+    const d = await resp.json();
+    if (resp.ok && d.ok) {
+      showMyStatus(true, '已儲存你的通知設定');
+    } else {
+      showMyStatus(false, d.error || '儲存失敗');
+    }
+  } catch (e) {
+    showMyStatus(false, '儲存失敗：' + e);
+  }
+});
+
+document.getElementById('myTestBtn').addEventListener('click', async () => {
+  const btn = document.getElementById('myTestBtn');
+  btn.disabled = true;
+  showMyStatus(true, '寄送測試郵件中...');
+  try {
+    const resp = await fetch('/api/my-test-email', { method: 'POST' });
+    const d = await resp.json();
+    if (resp.ok && d.ok) {
+      showMyStatus(true, d.warning || '測試郵件已寄出，請檢查收件匣（含垃圾郵件夾）');
+    } else {
+      showMyStatus(false, d.error || '寄送失敗');
+    }
+  } catch (e) {
+    showMyStatus(false, '寄送失敗：' + e);
+  } finally {
+    btn.disabled = false;
+  }
+});
+
+loadMySettings();
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+  showStatus(true, '儲存中...');
+  try {
+    const resp = await fetch('/api/settings', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(collectPayload()),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      showStatus(true, fieldChecked('discordEnabled', false)
+        ? '已儲存設定（Discord 設定需重啟 python webapp.py 才會生效）'
+        : '已儲存設定');
+    } else {
+      showStatus(false, '儲存失敗：' + (data.error || '未知錯誤'));
+    }
+  } catch (e) {
+    showStatus(false, '儲存失敗：' + e);
+  }
+});
+
+{% if is_super %}
+document.getElementById('testBtn').addEventListener('click', async () => {
+  const testRecipient = document.getElementById('testRecipient').value.trim();
+  if (!testRecipient) {
+    showStatus(false, '請先填寫「測試信收件人」');
+    return;
+  }
+  showStatus(true, '寄送測試郵件中...');
+  try {
+    const payload = collectPayload();
+    payload.email.to_addrs = [testRecipient];
+    const resp = await fetch('/api/test-email', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      showStatus(true, '測試郵件已寄出，請檢查收件匣（含垃圾郵件夾）');
+    } else {
+      showStatus(false, '寄送失敗：' + (data.error || '未知錯誤'));
+    }
+  } catch (e) {
+    showStatus(false, '寄送失敗：' + e);
+  }
+});
+{% endif %}
+
+{% if is_super %}
+function showAccountMsg(ok, text) {
+  const el = document.getElementById('accountMsg');
+  el.className = 'status-msg ' + (ok ? 'ok' : 'err');
+  el.textContent = text;
+}
+
+// 帳號名稱和 Email 現在是任何人都能自行填寫的，直接塞進 innerHTML 會讓對方
+// 註冊一個含有 <script> 的名稱，在超級帳號開設定頁時執行。一律先轉義。
+function esc(s) {
+  return String(s === undefined || s === null ? '' : s).replace(/[&<>"']/g, c => ({
+    '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+  }[c]));
+}
+
+const ROLE_LABEL = { super: '超級帳號', normal: '一般帳號', pending: '待審核' };
+
+async function loadAccounts() {
+  const resp = await fetch('/api/accounts');
+  const data = await resp.json();
+  const users = data.users || [];
+  const pending = users.filter(u => u.role === 'pending');
+
+  document.getElementById('pendingCount').textContent =
+    pending.length > 0 ? `${pending.length} 筆待審核` : '目前沒有待審核的申請';
+
+  const list = document.getElementById('accountList');
+  list.innerHTML = users.map(u => {
+    const isPending = u.role === 'pending';
+    const meta = [ROLE_LABEL[u.role] || u.role, u.email, u.registered_at]
+      .filter(Boolean).map(esc).join('・');
+    return `
+    <div class="ios-row"${isPending ? ' style="background:var(--accent-tint);"' : ''}>
+      <div>
+        <div>${esc(u.username)}</div>
+        <div class="hint" style="display:block;margin-top:2px;">${meta}</div>
+      </div>
+      <div style="display:flex;gap:6px;flex-shrink:0;">
+        ${isPending ? `<button type="button" class="approve-account-btn" data-username="${esc(u.username)}">核准</button>` : ''}
+        ${u.role !== 'super' ? `<button type="button" class="del-account-btn" data-username="${esc(u.username)}">${isPending ? '拒絕' : '刪除'}</button>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+document.getElementById('addAccountBtn').addEventListener('click', async () => {
+  const username = document.getElementById('newUsername').value.trim();
+  const email = document.getElementById('newEmail').value.trim();
+  const password = document.getElementById('newPassword').value;
+  try {
+    const resp = await fetch('/api/accounts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, email, password }),
+    });
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      document.getElementById('newUsername').value = '';
+      document.getElementById('newEmail').value = '';
+      document.getElementById('newPassword').value = '';
+      showAccountMsg(true, '已新增帳號');
+      loadAccounts();
+    } else {
+      showAccountMsg(false, data.error || '新增失敗');
+    }
+  } catch (e) {
+    showAccountMsg(false, '新增失敗：' + e);
+  }
+});
+
+document.getElementById('accountList').addEventListener('click', async (e) => {
+  const approveBtn = e.target.closest('.approve-account-btn');
+  if (approveBtn) {
+    const name = approveBtn.dataset.username;
+    if (!confirm(`確定要核准「${name}」嗎？核准後對方就能登入並使用追蹤功能。`)) return;
+    try {
+      const resp = await fetch(`/api/accounts/${encodeURIComponent(name)}/approve`, { method: 'POST' });
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        showAccountMsg(true, `已核准「${name}」`);
+        loadAccounts();
+      } else {
+        showAccountMsg(false, data.error || '核准失敗');
+      }
+    } catch (err) {
+      showAccountMsg(false, '核准失敗：' + err);
+    }
+    return;
+  }
+
+  const btn = e.target.closest('.del-account-btn');
+  if (!btn) return;
+  if (!confirm(`確定要刪除帳號「${btn.dataset.username}」嗎？該帳號的追蹤清單也會一併移除。`)) return;
+  try {
+    const resp = await fetch(`/api/accounts/${encodeURIComponent(btn.dataset.username)}`, { method: 'DELETE' });
+    const data = await resp.json();
+    if (resp.ok && data.ok) {
+      showAccountMsg(true, '已刪除帳號');
+      loadAccounts();
+    } else {
+      showAccountMsg(false, data.error || '刪除失敗');
+    }
+  } catch (e) {
+    showAccountMsg(false, '刪除失敗：' + e);
+  }
+});
+
+loadAccounts();
+{% endif %}
+</script>
+
+</body>
+</html>

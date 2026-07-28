@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<title>註冊帳號 - 台灣監理站車牌競標即時看板</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="container" style="max-width:420px;margin:0 auto;">
+  <div style="padding-top:calc(64px + env(safe-area-inset-top));text-align:center;">
+    <h1 style="font-size:22px;">註冊帳號</h1>
+    <div class="meta">台灣監理站車牌競標即時看板</div>
+  </div>
+
+  {% if done %}
+  <div class="panel" style="margin-top:20px;">
+    <div class="status-msg ok">申請已送出</div>
+    <p style="font-size:14px;line-height:1.7;">
+      你的帳號已經建立，目前正在等待管理員核准。<br>
+      核准之後就可以用剛才設定的帳號密碼登入，並開始收藏想追蹤的號碼。
+    </p>
+    <a href="/" class="ios-btn-block primary" style="display:block;text-align:center;text-decoration:none;">回到看板</a>
+    <a href="/login" class="ios-btn-block" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">前往登入</a>
+  </div>
+  {% else %}
+  <form method="post" class="panel" style="margin-top:20px;">
+    <div class="ios-row column">
+      <label for="username">帳號</label>
+      <input type="text" id="username" name="username" autocomplete="username" placeholder="想使用的帳號" required autofocus maxlength="50">
+    </div>
+    <div class="ios-row column">
+      <label for="email">Email</label>
+      <input type="email" id="email" name="email" autocomplete="email" placeholder="用來接收追蹤號碼的截止提醒" required>
+    </div>
+    <div class="ios-row column">
+      <label for="password">密碼</label>
+      <div class="pw-field">
+        <input type="password" id="password" name="password" autocomplete="new-password" placeholder="至少 8 碼" required minlength="8">
+        <button type="button" class="pw-toggle">顯示</button>
+      </div>
+    </div>
+    <div class="ios-row column">
+      <label for="password2">確認密碼</label>
+      <div class="pw-field">
+        <input type="password" id="password2" name="password2" autocomplete="new-password" placeholder="再輸入一次" required minlength="8">
+        <button type="button" class="pw-toggle">顯示</button>
+      </div>
+    </div>
+
+    {% if error %}
+    <div class="status-msg err">{{ error }}</div>
+    {% endif %}
+
+    <div class="meta" style="margin:4px 0 12px;line-height:1.6;">
+      註冊後需要管理員核准才能登入。看板與歷史查詢不用帳號就能看，
+      註冊是為了收藏追蹤號碼並接收截止提醒。
+    </div>
+
+    <button type="submit" class="ios-btn-block primary">送出申請</button>
+    <a href="/login" class="ios-btn-block" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">我已經有帳號了</a>
+  </form>
+  {% endif %}
+</div>
+
+<script src="/static/password-toggle.js"></script>
+</body>
+</html>

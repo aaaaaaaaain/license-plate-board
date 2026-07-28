@@ -1,0 +1,17 @@
+# 含有 Gmail 應用程式密碼、Discord bot token、session 簽章金鑰
+config.json
+
+# 含有所有使用者的帳號與密碼雜湊
+accounts.json
+
+# 掃描快取、出價歷史、個人追蹤清單
+data/
+
+# 執行紀錄（含登入失敗的來源 IP）
+logs/
+webapp.log
+webapp_stdout.log
+
+.venv/
+__pycache__/
+*.pyc
