@@ -8,16 +8,22 @@
 <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <title>設定 - 台灣監理站車牌競標即時看板</title>
+<link rel="icon" type="image/png" href="/static/plate-icon.png">
+<!-- iOS「加入主畫面」用的圖示：iOS 不吃 SVG favicon，一定要給 PNG，
+     沒給的話主畫面上會直接抓網頁截圖當圖示 -->
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="車牌競標">
+<script src="/static/theme.js"></script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
 <header>
   <div>
-    <h1>掃描與 Email 通知設定</h1>
+    <div class="brand"><img src="/static/plate-icon.png" alt="" class="brand-icon"><h1>掃描與 Email 通知設定</h1></div>
     <div class="meta">設定會儲存到伺服器上的 config.json（僅存在你自己的電腦）</div>
   </div>
-  <nav><a href="/">← 返回看板</a> <span class="nav-username">{{ username }}</span> <a href="/logout">登出</a></nav>
+  <nav><button type="button" class="theme-toggle" id="themeToggle" aria-label="切換配色">🌓 自動</button> <a href="/">← 返回看板</a> <span class="nav-username">{{ username }}</span> <a href="/logout">登出</a></nav>
 </header>
 
 <div class="container">
@@ -37,6 +43,11 @@
       <input type="checkbox" id="myBroadcastEnabled">
       <span class="ios-switch-track"></span>
     </label>
+  </div>
+  <div class="ios-row column">
+    <label>廣播要收哪些車種</label>
+    <div id="myBroadcastCategories" class="cat-grid"></div>
+    <div class="hint" style="margin-top:6px;">全部不勾＝所有車種都收。只影響全站廣播，自己追蹤的號碼不受這裡影響。</div>
   </div>
   <div class="ios-row column">
     <label for="myEmail">我的通知信箱</label>
@@ -277,6 +288,25 @@ function showStatus(ok, text) {
 }
 
 // --- 我的通知設定（每個帳號各自獨立）---
+
+// 車種清單由後端給（跟掃描器用的是同一份），不寫死在頁面裡，
+// 之後監理站多開一種車種，這裡會自己多一個選項。
+function renderBroadcastCategories(all, selected) {
+  const box = document.getElementById('myBroadcastCategories');
+  const chosen = new Set(selected);
+  // 沿用看板那份車種篩選的藥丸樣式（.cat-grid），選中會整顆變成強調色
+  box.innerHTML = all.map(c => `
+    <label>
+      <input type="checkbox" class="broadcast-category" value="${c}" ${chosen.has(c) ? 'checked' : ''}>
+      ${c}
+    </label>
+  `).join('');
+}
+
+function getBroadcastCategories() {
+  return [...document.querySelectorAll('.broadcast-category:checked')].map(el => el.value);
+}
+
 function showMyStatus(ok, text) {
   const el = document.getElementById('myStatusMsg');
   el.className = 'status-msg ' + (ok ? 'ok' : 'err');
@@ -291,6 +321,7 @@ async function loadMySettings() {
     document.getElementById('myEmail').value = d.email || '';
     document.getElementById('myNotifyEnabled').checked = !!d.notify_enabled;
     document.getElementById('myBroadcastEnabled').checked = !!d.broadcast_enabled;
+    renderBroadcastCategories(d.all_categories || [], d.broadcast_categories || []);
     setHMField('myAlertBeforeHours', 'myAlertBeforeMinutes', d.alert_before_minutes || null);
     document.getElementById('myAlertBeforeDefaultHint').textContent =
       formatMinutesFriendly(d.default_alert_before_minutes);
@@ -309,6 +340,7 @@ document.getElementById('saveMyBtn').addEventListener('click', async () => {
         email: document.getElementById('myEmail').value.trim(),
         notify_enabled: document.getElementById('myNotifyEnabled').checked,
         broadcast_enabled: document.getElementById('myBroadcastEnabled').checked,
+        broadcast_categories: getBroadcastCategories(),
         alert_before_minutes: getHMFieldMinutes('myAlertBeforeHours', 'myAlertBeforeMinutes'),
       }),
     });

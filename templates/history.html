@@ -8,16 +8,22 @@
 <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <title>出價歷史查詢 - 台灣監理站車牌競標即時看板</title>
+<link rel="icon" type="image/png" href="/static/plate-icon.png">
+<!-- iOS「加入主畫面」用的圖示：iOS 不吃 SVG favicon，一定要給 PNG，
+     沒給的話主畫面上會直接抓網頁截圖當圖示 -->
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="車牌競標">
+<script src="/static/theme.js"></script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
 <header>
   <div>
-    <h1>出價歷史查詢</h1>
+    <div class="brand"><img src="/static/plate-icon.png" alt="" class="brand-icon"><h1>出價歷史查詢</h1></div>
     <div class="meta">依監理站、車種、日期、號碼篩選，查看每個號碼的出價走勢或決標紀錄</div>
   </div>
-  <nav><a href="/">← 返回看板</a> {% if logged_in %}<span class="nav-username">{{ username }}</span> <a href="/logout">登出</a>{% else %}<a href="/login">登入</a>{% endif %}</nav>
+  <nav><button type="button" class="theme-toggle" id="themeToggle" aria-label="切換配色">🌓 自動</button> <a href="/">← 返回看板</a> {% if logged_in %}<span class="nav-username">{{ username }}</span> <a href="/logout">登出</a>{% else %}<a href="/login">登入</a>{% endif %}</nav>
 </header>
 
 <div class="container">
@@ -35,19 +41,19 @@
     </select>
     <input type="text" id="numberFilter" placeholder="輸入號碼篩選，例如：8888">
     <select id="viewModeFilter">
-      <option value="active">追蹤中／曾出現過的號碼</option>
+      <option value="active">競標中</option>
       <option value="decided">已決標紀錄</option>
     </select>
   </div>
 </div>
 
-<div class="ios-list-header">決標統計</div>
+<div class="ios-list-header" id="statsHeader">決標統計</div>
 <div class="panel" id="statsPanel">
   <div id="statsSummary" class="hint"></div>
   <div id="statsChart"></div>
 </div>
 
-<div class="ios-list-header" id="listHeader">追蹤中 / 曾出現過的號碼</div>
+<div class="ios-list-header" id="listHeader">競標中</div>
 <div class="ios-list-group" id="numberList"></div>
 <div id="pagination" class="pagination-row"></div>
 
@@ -81,9 +87,10 @@ function currentDataset() {
   return currentMode() === 'decided' ? decidedItems : allItems;
 }
 
-// 「追蹤中／曾出現過」這份清單本來就包含已經決標的號碼，但原本畫出來跟還在
+// 這份清單的原始資料（history-list）本來就包含已經決標的號碼，畫出來跟還在
 // 競標中的完全一樣（一樣的價格、一樣的「查看趨勢」），看起來像是還可以出價——
-// 實際上四筆裡就有一筆早就結標了。這裡把已決標的標出來，價格也改成決標色。
+// 實際上四筆裡就有一筆早就結標了。既然這欄叫「競標中」，就把已決標的整個排掉，
+// 它們在「已決標紀錄」那個模式裡看得到。
 let decidedMap = new Map();
 
 function buildDecidedMap() {
@@ -105,12 +112,7 @@ function decidedFor(it) {
 }
 
 function renderActiveRow(it) {
-  const decided = decidedFor(it);
-  const priceColor = decided ? 'var(--green, #34C759)' : 'var(--accent)';
-  const tail = decided ? '✅ 已決標' : '📈 查看趨勢';
-  const when = decided
-    ? `決標 ${decided.decided_at ? decided.decided_at.replace('T', ' ') : '-'}`
-    : `最後 ${it.last_seen ? it.last_seen.replace('T', ' ') : '-'}`;
+  const when = `最後 ${it.last_seen ? it.last_seen.replace('T', ' ') : '-'}`;
   return `
     <div class="ios-row number-row" data-plate="${it.plate}" data-category="${it.category}" data-section="${it.section}" data-station="${it.station}">
       <div>
@@ -120,8 +122,8 @@ function renderActiveRow(it) {
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
-        <div style="font-weight:600;color:${priceColor};">${it.price} 元</div>
-        <div class="hint">${tail}</div>
+        <div style="font-weight:600;color:var(--accent);">${it.price} 元</div>
+        <div class="hint">📈 查看趨勢</div>
       </div>
     </div>
   `;
@@ -168,9 +170,9 @@ function renderPagination(total, totalPages) {
   });
 }
 
-// 號碼篩選：決標紀錄只有數字（不含字首字母），追蹤中的還有完整號牌，
+// 號碼篩選：決標紀錄只有數字（不含字首字母），競標中的還有完整號牌，
 // 所以兩個欄位都比對——打「8888」兩種模式都找得到，打「PJY」也還能在
-// 追蹤中的清單裡找到那一面。
+// 競標中的清單裡找到那一面。
 function matchesNumber(it, keyword) {
   if (!keyword) return true;
   return (it.number_key || '').includes(keyword) || (it.plate || '').includes(keyword);
@@ -186,9 +188,15 @@ function renderList() {
   const list = document.getElementById('numberList');
 
   document.getElementById('listHeader').textContent =
-    mode === 'decided' ? '已決標紀錄' : '追蹤中 / 曾出現過的號碼';
+    mode === 'decided' ? '已決標紀錄' : '競標中';
 
-  // 日期篩選：決標清單看的是決標當天；追蹤中的清單要看「那天有沒有出價紀錄」（days），
+  // 決標統計只在「已決標紀錄」模式顯示——看競標中的清單時，一整塊決標行情
+  // 擺在最上面會擋住真正要看的東西，而且那份統計跟這個模式的內容無關。
+  const showStats = mode === 'decided' ? '' : 'none';
+  document.getElementById('statsHeader').style.display = showStats;
+  document.getElementById('statsPanel').style.display = showStats;
+
+  // 日期篩選：決標清單看的是決標當天；競標中的清單要看「那天有沒有出價紀錄」（days），
   // 不能只看 last_seen——一面 07-26 上架、07-28 才結標的號牌，07-26 那天確實在競標，
   // 但它的 last_seen 是 07-28，只比對 last_seen 會把它從 07-26 的結果裡漏掉。
   const matchesDate = mode === 'decided'
@@ -196,6 +204,7 @@ function renderList() {
     : it => !date || (it.days || []).includes(date);
 
   const filtered = dataset.filter(it =>
+    (mode === 'decided' || !decidedFor(it)) &&
     (!station || it.station === station) &&
     (!category || it.category === category) &&
     matchesDate(it) &&

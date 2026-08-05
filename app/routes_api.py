@@ -8,6 +8,8 @@ from datetime import datetime
 from flask import Blueprint, jsonify, request, session
 from werkzeug.security import generate_password_hash
 
+from plate_bid_scanner import CATEGORIES
+
 from .accounts_store import ACCOUNTS, USERS_LOCK, EMAIL_RE, find_user, save_accounts
 from .auth import login_required, super_required
 from .config_store import CONFIG, save_config
@@ -127,6 +129,9 @@ def api_my_settings():
                 # None 代表沒有自訂，跟著全站預設值走
                 "alert_before_minutes": (user.get("alert_before_minutes") if user else None),
                 "default_alert_before_minutes": CONFIG["alert_before_minutes"],
+                # 廣播要收哪些車種；空清單＝全部都收（舊帳號沒這個欄位就是全收）
+                "broadcast_categories": list(user.get("broadcast_categories") or []) if user else [],
+                "all_categories": list(CATEGORIES),
             })
 
     data = request.get_json(force=True, silent=True) or {}
@@ -137,6 +142,16 @@ def api_my_settings():
         return jsonify({"ok": False, "error": "Email 格式不正確"}), 400
     if (notify_enabled or broadcast_enabled) and not email:
         return jsonify({"ok": False, "error": "要接收提醒的話，請先填寫通知信箱"}), 400
+
+    # 車種篩選：只留系統認得的車種，避免有人塞任意字串進帳號檔。
+    # 全選跟全不選都存成空清單＝不篩選，語意一致（不然全不選會變成什麼都收不到，
+    # 但使用者以為自己只是還沒選）。
+    raw_categories = data.get("broadcast_categories")
+    broadcast_categories = []
+    if isinstance(raw_categories, list):
+        broadcast_categories = [c for c in CATEGORIES if c in raw_categories]
+        if len(broadcast_categories) == len(CATEGORIES):
+            broadcast_categories = []
 
     # 空值／0／null 都代表「不要自訂，跟著全站預設值走」
     alert_before_raw = data.get("alert_before_minutes")
@@ -156,6 +171,10 @@ def api_my_settings():
         user["email"] = email
         user["notify_enabled"] = notify_enabled
         user["broadcast_enabled"] = broadcast_enabled
+        if broadcast_categories:
+            user["broadcast_categories"] = broadcast_categories
+        else:
+            user.pop("broadcast_categories", None)
         if alert_before_minutes is None:
             user.pop("alert_before_minutes", None)
         else:
@@ -163,6 +182,7 @@ def api_my_settings():
         save_accounts(ACCOUNTS)
     logger.info(f"[my-settings] {username} 更新了個人通知設定"
                 f"（追蹤提醒{'開' if notify_enabled else '關'}、全站廣播{'開' if broadcast_enabled else '關'}、"
+                f"廣播車種{'／'.join(broadcast_categories) if broadcast_categories else '全部'}、"
                 f"即將截止門檻{alert_before_minutes if alert_before_minutes is not None else '預設'}）")
     return jsonify({"ok": True})
 

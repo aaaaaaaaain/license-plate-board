@@ -8,20 +8,26 @@
 <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
 <title>台灣監理站車牌競標即時看板</title>
+<link rel="icon" type="image/png" href="/static/plate-icon.png">
+<!-- iOS「加入主畫面」用的圖示：iOS 不吃 SVG favicon，一定要給 PNG，
+     沒給的話主畫面上會直接抓網頁截圖當圖示 -->
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="車牌競標">
+<script src="/static/theme.js"></script>
 <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
 
 <header>
   <div>
-  <h1>台灣監理站車牌競標即時看板</h1>
+  <div class="brand"><img src="/static/plate-icon.png" alt="" class="brand-icon"><h1>台灣監理站車牌競標即時看板</h1></div>
   <div class="meta">
     背景每 {{ scan_interval_minutes }} 分鐘自動重新掃描全國監理站 ·
     <span id="alertThresholdText">決標前 {{ alert_before_minutes }} 分鐘內視為「即將截止」</span> ·
     最後更新：<span id="lastUpdated">尚未更新</span>
   </div>
   </div>
-  <nav><a href="/history">📈 歷史查詢</a> <a href="/settings">⚙ Email / 掃描設定</a> {% if logged_in %}<span class="nav-username">{{ username }}</span> <a href="/logout">登出</a>{% else %}<a href="/login">登入</a>{% endif %}</nav>
+  <nav><button type="button" class="theme-toggle" id="themeToggle" aria-label="切換配色">🌓 自動</button> <a href="/history">📈 歷史查詢</a> <a href="/settings">⚙ Email / 掃描設定</a> {% if logged_in %}<span class="nav-username">{{ username }}</span> <a href="/logout">登出</a>{% else %}<a href="/login">登入</a>{% endif %}</nav>
 </header>
 
 <div class="container">

@@ -6,6 +6,7 @@ import re
 import sqlite3
 from datetime import datetime
 
+from .logging_setup import logger
 from .paths import HISTORY_DB_PATH, PREV_ACTIVE_PATH
 
 
@@ -196,6 +197,17 @@ def detect_decided(enriched, recorded_at, failed_stations=None):
     for station in enriched:
         for p in station["plates"]:
             current_keys.add((p["號牌"], p["號牌類別"], station["section"], station["station"]))
+
+    # 整批消失＝監理站網站在維護，不是幾百面號牌同時結標。
+    # 2026-08-01 01:44 就發生過：連續兩輪回傳 0 面（HTTP 沒報錯，所以不算抓取失敗），
+    # 315 面號牌被整批誤判成決標，13 分鐘後又全部回來。這種情況這一輪什麼都不判，
+    # 也不更新 PREV_ACTIVE_KEYS，等下一輪抓到正常資料再比對。
+    if PREV_ACTIVE_KEYS and len(current_keys) < len(PREV_ACTIVE_KEYS) * 0.5:
+        logger.warning(
+            f"[decided] 這輪只剩 {len(current_keys)} 面（上一輪 {len(PREV_ACTIVE_KEYS)} 面），"
+            f"整批消失比較像網站維護而不是同時決標——這輪不判定決標，等下一輪再比對"
+        )
+        return
 
     missing_keys = PREV_ACTIVE_KEYS - current_keys
     held_keys = {k for k in missing_keys if is_failed(k[2], k[3])}
@@ -422,8 +434,8 @@ def get_plate_history(plate, category=None, section=None, station=None):
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         rows = conn.execute(
-            f"SELECT plate, price, bid_count, recorded_at FROM bid_history "
-            f"WHERE {where_sql} ORDER BY recorded_at ASC",
+            f"SELECT plate, price, bid_count, recorded_at, category, section, station "
+            f"FROM bid_history WHERE {where_sql} ORDER BY recorded_at ASC",
             params,
         ).fetchall()
         decided_row = conn.execute(
@@ -434,7 +446,15 @@ def get_plate_history(plate, category=None, section=None, station=None):
     finally:
         conn.close()
 
-    history = [{"plate": r[0], "price": r[1], "bid_count": r[2], "recorded_at": r[3]} for r in rows]
+    # 每一筆都帶上車種／轄區／監理站：不指定監理站查詢時，同一個數字可能同時來自
+    # 好幾個監理站，沒有這幾個欄位就分不出哪一筆是哪一站的（Discord 的歷史查詢會顯示）。
+    history = [
+        {
+            "plate": r[0], "price": r[1], "bid_count": r[2], "recorded_at": r[3],
+            "category": r[4], "section": r[5], "station": r[6],
+        }
+        for r in rows
+    ]
     decided = None
     if decided_row:
         final_price, decided_at = decided_row
@@ -442,3 +462,23 @@ def get_plate_history(plate, category=None, section=None, station=None):
         if not has_newer_activity:
             decided = {"final_price": final_price, "decided_at": decided_at}
     return history, decided
+
+
+def get_history_filters():
+    """回傳歷史紀錄裡實際出現過的監理站與車種，給 Discord 的自動完成選單用。
+
+    刻意不用「目前競標中」的清單：歷史查的是過去，某個監理站今天沒有標的
+    不代表它沒有歷史紀錄，拿現況當選單會讓那些站永遠選不到。
+    只是兩個 DISTINCT，每次按鍵都查也還好。
+    """
+    conn = sqlite3.connect(HISTORY_DB_PATH)
+    try:
+        stations = [r[0] for r in conn.execute(
+            "SELECT DISTINCT station FROM bid_history WHERE station IS NOT NULL AND station != '' ORDER BY station"
+        ).fetchall()]
+        categories = [r[0] for r in conn.execute(
+            "SELECT DISTINCT category FROM bid_history WHERE category IS NOT NULL AND category != '' ORDER BY category"
+        ).fetchall()]
+    finally:
+        conn.close()
+    return {"stations": stations, "categories": categories}

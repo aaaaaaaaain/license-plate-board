@@ -16,10 +16,14 @@ function renderHistoryChart(history, decided) {
     return;
   }
   const width = 320, height = 160;
-  const padding = { top: 22, right: 14, bottom: 22, left: 44 };
+  const padding = { top: 22, right: 14, bottom: 28, left: 44 };
   const plotW = width - padding.left - padding.right;
   const plotH = height - padding.top - padding.bottom;
 
+  // 橫軸標的是「第幾次出價」而不是時間。每一筆紀錄都畫成一個點、金額一筆都不省——
+  // 寫入端（record_bid_changes）本來就只在出價或次數有變動時才存一筆，
+  // 資料庫裡不會有重複的快照，所以這裡不需要、也不應該再自行合併：
+  // 萬一出現同一次出價金額卻改了（例如更正），合併就會把其中一個金額弄丟。
   const prices = history.map(h => Number(h.price) || 0);
   const minP = Math.min(...prices);
   const maxP = Math.max(...prices);
@@ -32,7 +36,33 @@ function renderHistoryChart(history, decided) {
   const baseP = flat ? minP - rangeP / 2 : minP;
   const n = history.length;
 
-  const x = i => padding.left + (n === 1 ? plotW / 2 : (i / (n - 1)) * plotW);
+  // 橫軸位置照「第幾次出價」等比例排，不是每筆平均分一格——中間有幾次沒抓到金額時
+  // （網站只公布當下的價格，兩次掃描之間的出價拿不到），第 9 次到第 18 次那段
+  // 本來就該比第 7 次到第 8 次寬，平均分格會讓跳過 9 次跟跳過 1 次看起來一樣。
+  //
+  // 流標後換字首重新上架時，出價次數會從頭數起，這裡累加上一輪的次數當偏移量，
+  // 新一輪才會接在舊的右邊，而不是把線拉回頭。
+  const xVals = [];
+  let offset = 0, prevBid = null;
+  for (const h of history) {
+    const bid = Number(h.bid_count) || 0;
+    if (prevBid !== null && bid < prevBid) offset += prevBid + 1;  // +1：新一輪要落在上一輪最後一次的右邊
+    xVals.push(offset + bid);
+    prevBid = bid;
+  }
+  const minX = Math.min(...xVals);
+  const maxX = Math.max(...xVals);
+  // 所有紀錄都停在同一次出價時（例如連兩天都還是第 3 次、沒人再加價），
+  // 依次數等比例會把每個點疊在同一個 x 上，畫出來像只有一個點。
+  // 這種情況退回照筆數平均分佈，至少看得出抓到幾筆、時間有在推進。
+  const flatX = maxX === minX;
+  const spanX = flatX ? 1 : maxX - minX;
+
+  const x = i => padding.left + (
+    n === 1 ? plotW / 2
+      : flatX ? (i / (n - 1)) * plotW
+        : ((xVals[i] - minX) / spanX) * plotW
+  );
   const y = v => padding.top + plotH - ((v - baseP) / rangeP) * plotH;
 
   const steps = 4;
@@ -57,12 +87,42 @@ function renderHistoryChart(history, decided) {
       `<title>${tip}</title></circle>`;
   }).join('');
 
-  const last = history[history.length - 1];
+  const last = history[n - 1];
   const lastX = x(n - 1), lastY = y(Number(last.price) || 0);
   const labelY = Math.max(lastY - 10, 10);
   const labelColor = decided ? 'var(--green, #34C759)' : 'var(--accent)';
   const labelText = decided ? `✅ ${last.price} 元` : `${last.price} 元`;
   const label = `<text x="${lastX}" y="${labelY}" font-size="11" font-weight="600" text-anchor="end" fill="${labelColor}">${labelText}</text>`;
+
+  // 橫軸刻度：標頭、尾，中間再補一個離頭尾都夠遠的，靠太近就不標——
+  // 「第 N 次」的文字疊在一起比少標一個更難看懂。
+  const ticks = [];
+  const pushTick = i => {
+    if (i < 0 || i >= n) return;
+    if (ticks.some(j => Math.abs(x(j) - x(i)) < 46)) return;
+    ticks.push(i);
+  };
+  // 全部同一次出價時只標一個刻度——每個點都標「第 3 次」會像是軸的範圍，反而誤導
+  if (flatX) {
+    pushTick(n - 1);
+  } else {
+    pushTick(0);
+    pushTick(n - 1);
+    let midIdx = 0, best = Infinity;
+    const midX = minX + spanX / 2;
+    xVals.forEach((v, i) => {
+      const d = Math.abs(v - midX);
+      if (d < best) { best = d; midIdx = i; }
+    });
+    pushTick(midIdx);
+  }
+
+  const xLabels = ticks.sort((a, b) => a - b).map(i => {
+    // 只有一個點時它是置中的，標籤跟著置中；頭尾的標籤靠邊才不會被切掉
+    const anchor = n === 1 ? 'middle' : i === 0 ? 'start' : i === n - 1 ? 'end' : 'middle';
+    return `<text x="${x(i)}" y="${height - 8}" font-size="9" text-anchor="${anchor}" `
+      + `fill="var(--label-secondary)">第 ${history[i].bid_count} 次</text>`;
+  }).join('');
 
   container.innerHTML = `
     <svg viewBox="0 0 ${width} ${height}" style="width:100%;height:auto;display:block;overflow:visible;">
@@ -70,6 +130,7 @@ function renderHistoryChart(history, decided) {
       <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       ${dots}
       ${label}
+      ${xLabels}
     </svg>
   `;
 }
@@ -200,7 +261,11 @@ async function downloadHistoryScreenshot() {
     const ctx = canvas.getContext('2d');
     ctx.scale(scale, scale);
 
-    const isDark = matchMedia('(prefers-color-scheme: dark)').matches;
+    // 跟著頁面目前實際的配色走，不是系統的偏好——使用者用右上角切換鈕選了淺色、
+    // 但系統是深色時，只看 prefers-color-scheme 會截出一張跟畫面不一樣的深色圖。
+    // （data-theme 由 theme.js 設定，「自動」也已經在那裡解析成 light/dark）
+    const isDark = (document.documentElement.dataset.theme
+      || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')) === 'dark';
     const colorBg = isDark ? '#1c1c1e' : '#ffffff';
     const colorLabel = isDark ? '#ffffff' : '#1c1c1e';
     const colorSecondary = isDark ? '#8e8e93' : '#6d6d72';

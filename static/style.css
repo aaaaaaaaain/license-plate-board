@@ -15,8 +15,10 @@
   --header-bg: rgba(242,242,247,.82);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
+/* 深色配色。「跟著系統」是由 theme.js 解析成 light/dark 後寫進 data-theme 的，
+   所以這裡不用再寫一次 @media (prefers-color-scheme: dark)——同一組顏色只維護一份。 */
+:root[data-theme="dark"] {
+    color-scheme: dark;
     --bg: #000000;
     --card-bg: #1C1C1E;
     --card-shadow: none;
@@ -30,8 +32,9 @@
     --red-tint: rgba(255,69,58,.18);
     --green: #30D158;
     --header-bg: rgba(20,20,22,.82);
-  }
 }
+
+:root[data-theme="light"] { color-scheme: light; }
 
 * { -webkit-tap-highlight-color: transparent; }
 
@@ -66,6 +69,31 @@ h1 {
   letter-spacing: -0.01em;
   margin: 0 0 3px;
 }
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.brand-icon {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+/* 車牌圖是黑線透明底，深色配色下要反白才看得見 */
+:root[data-theme="dark"] .brand-icon { filter: invert(1); }
+
+/* 配色切換鈕：長得跟旁邊的 nav 連結一樣，不要多一顆按鈕框搶注意力 */
+.theme-toggle {
+  background: none;
+  border: none;
+  color: var(--accent);
+  font-size: 15px;
+  font-weight: 500;
+  font-family: inherit;
+  padding: 6px 4px;
+  cursor: pointer;
+}
+.theme-toggle:active { opacity: 0.5; }
 .meta {
   color: var(--label-secondary);
   font-size: 12.5px;
@@ -697,3 +725,4 @@ td.remain {
 }
 .status-msg.ok { display: block; background: var(--accent-tint); color: var(--accent); }
 .status-msg.err { display: block; background: var(--red-tint); color: var(--red); }
+

@@ -95,7 +95,9 @@ def send_broadcast_alerts(enriched):
 
     with USERS_LOCK:
         recipients = [
-            (u["username"], u.get("email", ""), _user_alert_minutes(u))
+            # broadcast_categories 空的＝不篩選，全部車種都收（舊帳號沒這個欄位也是全收）
+            (u["username"], u.get("email", ""), _user_alert_minutes(u),
+             set(u.get("broadcast_categories") or []))
             for u in ACCOUNTS
             if u.get("broadcast_enabled") and u.get("email") and u.get("role") != "pending"
         ]
@@ -104,10 +106,12 @@ def send_broadcast_alerts(enriched):
 
     plates = list(_flatten_plates(enriched))
 
-    for username, recipient, threshold_minutes in recipients:
+    for username, recipient, threshold_minutes, categories in recipients:
         by_stage = {"first": [], "final": []}
         keys_by_stage = {"first": set(), "final": set()}
         for u in plates:
+            if categories and u["號牌類別"] not in categories:
+                continue
             due = _due_stage("broadcast", username, u, threshold_minutes)
             if due is None:
                 continue
