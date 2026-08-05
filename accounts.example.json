@@ -1,0 +1,11 @@
+{
+  "users": [
+    {
+      "username": "your_admin_account",
+      "password_hash": "GENERATED_BY_THE_APP_DO_NOT_WRITE_BY_HAND",
+      "role": "super",
+      "email": "",
+      "registered_at": "2026-01-01T00:00:00"
+    }
+  ]
+}
