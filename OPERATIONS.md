@@ -1,6 +1,6 @@
 # 維運指令速查
 
-適用環境：WSL（Ubuntu-24.04），專案位於 `/mnt/d/Users/Tester_APK.TW/Desktop/eve`
+適用環境：WSL（Ubuntu-24.04），專案位於 `/mnt/d/Users/Tester_APK.TW/Desktop/license-plate-board`
 （Windows 端路徑：`D:\Users\Tester_APK.TW\Desktop\eve`）。
 
 以下指令預設在 **WSL 終端機**裡執行。如果你人在 Windows PowerShell / cmd，
@@ -18,7 +18,7 @@ wsl.exe bash -lc "這裡放下面的指令"
 不然關掉終端機（或某些工具的背景執行機制回收）時會把服務一起殺掉：
 
 ```bash
-cd /mnt/d/Users/Tester_APK.TW/Desktop/eve
+cd /mnt/d/Users/Tester_APK.TW/Desktop/license-plate-board
 setsid nohup .venv/bin/python webapp.py >> logs/webapp_stdout.log 2>&1 < /dev/null &
 disown
 ```
@@ -86,10 +86,10 @@ curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:5000/
 | `logs/webapp_stdout.log` | 標準輸出/錯誤（啟動訊息、沒被 logging 接住的例外） |
 
 ```bash
-cd /mnt/d/Users/Tester_APK.TW/Desktop/eve
+cd /mnt/d/Users/Tester_APK.TW/Desktop/license-plate-board
 
 # 即時看
-tail -f logs/webapp.log
+tail -F logs/webapp.log
 
 # 只看錯誤
 grep -i "error\|traceback" logs/webapp.log | tail -30
@@ -101,7 +101,7 @@ tail -n 50 logs/webapp.log
 沒有先 `cd` 也可以，直接用完整路徑：
 
 ```bash
-tail -f /mnt/d/Users/Tester_APK.TW/Desktop/eve/logs/webapp.log
+tail -f /mnt/d/Users/Tester_APK.TW/Desktop/license-plate-board/logs/webapp.log
 ```
 
 正常開機應該要看到這幾行（沒有 `ERROR` / `Traceback` 就是好的）：

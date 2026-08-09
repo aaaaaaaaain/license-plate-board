@@ -44,6 +44,12 @@
       <option value="active">競標中</option>
       <option value="decided">已決標紀錄</option>
     </select>
+    <select id="sortFilter">
+      <option value="">預設排序（最新在前）</option>
+      <option value="time_asc">時間：舊到新</option>
+      <option value="price_desc">價格：高到低</option>
+      <option value="price_asc">價格：低到高</option>
+    </select>
   </div>
 </div>
 
@@ -178,6 +184,20 @@ function matchesNumber(it, keyword) {
   return (it.number_key || '').includes(keyword) || (it.plate || '').includes(keyword);
 }
 
+// 排序的兩個欄位在兩種模式下叫不同名字：競標中看「最後更新」和「目前出價」，
+// 已決標看「決標時間」和「決標價」。取值時各自對應，排序選項才能兩邊共用。
+function sortTimeValue(it) {
+  return it.decided_at || it.last_seen || '';
+}
+function sortPriceValue(it) {
+  return Number(it.final_price !== undefined ? it.final_price : it.price) || 0;
+}
+const SORTERS = {
+  time_asc: (a, b) => sortTimeValue(a).localeCompare(sortTimeValue(b)),
+  price_desc: (a, b) => sortPriceValue(b) - sortPriceValue(a),
+  price_asc: (a, b) => sortPriceValue(a) - sortPriceValue(b),
+};
+
 function renderList() {
   const station = document.getElementById('stationFilter').value;
   const category = document.getElementById('categoryFilter').value;
@@ -210,6 +230,11 @@ function renderList() {
     matchesDate(it) &&
     matchesNumber(it, number)
   );
+
+  // 預設排序＝後端給的順序（最後更新／決標時間由新到舊），所以只在有選才排。
+  // filtered 是 filter() 產生的新陣列，就地排序不會動到 allItems／decidedItems。
+  const sorter = SORTERS[document.getElementById('sortFilter').value];
+  if (sorter) filtered.sort(sorter);
 
   const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
   if (currentPage > totalPages) currentPage = totalPages;
@@ -463,6 +488,7 @@ document.getElementById('categoryFilter').addEventListener('change', () => { cur
 document.getElementById('dateFilter').addEventListener('change', () => { currentPage = 1; renderList(); });
 document.getElementById('numberFilter').addEventListener('input', () => { currentPage = 1; renderList(); renderStats(); });
 document.getElementById('viewModeFilter').addEventListener('change', () => { currentPage = 1; renderList(); });
+document.getElementById('sortFilter').addEventListener('change', () => { currentPage = 1; renderList(); });
 
 initHistoryModal();
 loadList();

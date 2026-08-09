@@ -171,6 +171,12 @@ def save_prev_active_keys(keys):
 # 紀錄。存檔後就算重啟也還記得上一輪的狀態，不會漏。
 PREV_ACTIVE_KEYS = load_prev_active_keys()
 
+# 整批消失時要撐幾輪才認定是真的結標（掃描間隔 5 分鐘＋一輪約 1 分鐘，3 輪約 18 分鐘）。
+# 撐得夠久才蓋得住維護時段，又不會讓真的結標拖太久才記錄。
+MASS_MISSING_HOLD_ROUNDS = 3
+_MASS_MISSING_SINCE = None
+_MASS_MISSING_ROUNDS = 0
+
 
 def detect_decided(enriched, recorded_at, failed_stations=None):
     """比對這次掃描跟上一次掃描，找出「上次還在、這次不見了」的號碼＝剛決標，記下最後出價當作決標價。
@@ -198,16 +204,33 @@ def detect_decided(enriched, recorded_at, failed_stations=None):
         for p in station["plates"]:
             current_keys.add((p["號牌"], p["號牌類別"], station["section"], station["station"]))
 
-    # 整批消失＝監理站網站在維護，不是幾百面號牌同時結標。
-    # 2026-08-01 01:44 就發生過：連續兩輪回傳 0 面（HTTP 沒報錯，所以不算抓取失敗），
-    # 315 面號牌被整批誤判成決標，13 分鐘後又全部回來。這種情況這一輪什麼都不判，
-    # 也不更新 PREV_ACTIVE_KEYS，等下一輪抓到正常資料再比對。
+    # 整批消失有兩種可能，而且當下分不出來：
+    #   維護——2026-08-01 01:44 連續兩輪回傳 0 面（HTTP 沒報錯，不算抓取失敗），
+    #         315 面被誤判成決標，13 分鐘後全部回來。
+    #   真的整批結標——同一個梯次的號牌截止時間一樣，時間到就一起消失，
+    #         2026-08-07 10:42 全國 698 面就是這樣，一小時後網站仍然是空的。
+    # 用「撐幾輪」分辨：先按住不判，連續 MASS_MISSING_HOLD_ROUNDS 輪都還是空的
+    # 就當作真的結標。決標時間用第一輪消失的時間，不是接受的那一輪，
+    # 這樣紀錄的時間才貼近實際截止時間。
+    global _MASS_MISSING_SINCE, _MASS_MISSING_ROUNDS
     if PREV_ACTIVE_KEYS and len(current_keys) < len(PREV_ACTIVE_KEYS) * 0.5:
+        _MASS_MISSING_ROUNDS += 1
+        if _MASS_MISSING_SINCE is None:
+            _MASS_MISSING_SINCE = recorded_at
+        if _MASS_MISSING_ROUNDS < MASS_MISSING_HOLD_ROUNDS:
+            logger.warning(
+                f"[decided] 這輪只剩 {len(current_keys)} 面（上一輪 {len(PREV_ACTIVE_KEYS)} 面）"
+                f"——先不判定決標，連續 {MASS_MISSING_HOLD_ROUNDS} 輪都這樣才視為真的整批結標"
+                f"（目前第 {_MASS_MISSING_ROUNDS} 輪）"
+            )
+            return
         logger.warning(
-            f"[decided] 這輪只剩 {len(current_keys)} 面（上一輪 {len(PREV_ACTIVE_KEYS)} 面），"
-            f"整批消失比較像網站維護而不是同時決標——這輪不判定決標，等下一輪再比對"
+            f"[decided] 已經連續 {_MASS_MISSING_ROUNDS} 輪只剩 {len(current_keys)} 面，"
+            f"視為真的整批結標（第一輪消失是 {_MASS_MISSING_SINCE}）"
         )
-        return
+
+    _MASS_MISSING_SINCE = None
+    _MASS_MISSING_ROUNDS = 0
 
     missing_keys = PREV_ACTIVE_KEYS - current_keys
     held_keys = {k for k in missing_keys if is_failed(k[2], k[3])}
@@ -219,19 +242,22 @@ def detect_decided(enriched, recorded_at, failed_stations=None):
                 plate, category, section, station_name = key
                 number_key = extract_plate_number(plate)
                 last = conn.execute(
-                    "SELECT price FROM bid_history "
+                    "SELECT price, recorded_at FROM bid_history "
                     "WHERE plate=? AND category=? AND section=? AND station=? "
                     "ORDER BY id DESC LIMIT 1",
                     key,
                 ).fetchone()
                 if last is None:
                     continue
-                (price,) = last
+                price, last_seen = last
+                # 決標時間記「最後一次看到這面號牌」的時間，不是我們發現它不見的時間。
+                # 兩者都在一個掃描間隔內，但最後一次看到的時間不受重啟、也不受
+                # 整批消失要按住幾輪影響——按住三輪才確認的話，用發現時間會晚快 20 分鐘。
                 conn.execute(
                     "INSERT OR IGNORE INTO decided_results "
                     "(number_key, category, section, station, final_price, decided_at) "
                     "VALUES (?, ?, ?, ?, ?, ?)",
-                    (number_key, category, section, station_name, price, recorded_at),
+                    (number_key, category, section, station_name, price, last_seen or recorded_at),
                 )
             conn.commit()
         finally:

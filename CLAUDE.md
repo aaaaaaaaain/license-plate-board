@@ -19,7 +19,7 @@
 只重新整理瀏覽器看到的還是舊版。
 
 ```bash
-wsl -e bash -lc 'cd /mnt/d/Users/Tester_APK.TW/Desktop/eve && systemctl --user restart eve-webapp && sleep 15 && tail -3 logs/webapp.log'
+wsl -e bash -lc 'cd /mnt/d/Users/Tester_APK.TW/Desktop/license-plate-board && systemctl --user restart eve-webapp && sleep 15 && tail -3 logs/webapp.log'
 ```
 
 改完後看 log 的最後三行確認：`waitress 啟動於`、`已登入：車牌競標查詢`、`已同步 N 個斜線指令`。
