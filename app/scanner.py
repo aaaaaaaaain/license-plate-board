@@ -3,6 +3,7 @@
 
 import json
 import threading
+import time
 from datetime import datetime, timedelta
 
 from plate_bid_scanner import get_all_sections_and_stations, scan
@@ -25,6 +26,9 @@ STATE = {
 # 讓使用者能主動要求馬上重掃一次，又不會因為連續按而對監理服務網送出重疊的掃描。
 SCAN_NOW_EVENT = threading.Event()
 MANUAL_SCAN_COOLDOWN_SECONDS = 30
+
+# 兩輪掃描之間至少要隔這麼久，避免掃描耗時超過設定間隔時變成連續打監理服務網
+MIN_GAP_SECONDS = 30
 
 
 def trigger_scan_now():
@@ -113,6 +117,7 @@ def build_enriched_results(raw_results, alert_before_minutes):
 
 def run_scan_once():
     alert_before = CONFIG["alert_before_minutes"]
+    started = time.monotonic()
 
     with STATE_LOCK:
         STATE["scanning"] = True
@@ -147,7 +152,7 @@ def run_scan_once():
             encoding="utf-8",
         )
         logger.info(f"[scan] 完成，{sum(len(i['plates']) for i in enriched)} 面號牌競標中，"
-                    f"其中 {len(urgent_list)} 面即將截止")
+                    f"其中 {len(urgent_list)} 面即將截止，耗時 {time.monotonic() - started:.1f} 秒")
 
     except Exception as e:
         with STATE_LOCK:
@@ -170,8 +175,14 @@ def background_loop():
             pass
 
     while True:
+        started = time.monotonic()
         run_scan_once()
         interval = max(1, CONFIG["scan_interval_minutes"]) * 60
+        # 等待要扣掉這輪掃描自己花掉的時間，設定的間隔才是真的「每 N 分鐘一輪」。
+        # 原本是掃完才從頭睡滿 N 分鐘，實際節奏會變成 N 分鐘＋掃描耗時
+        # （設 3 分鐘、掃描 109 秒，log 上量到的間隔是 289 秒）。
+        # 萬一哪天掃描比間隔還久，也至少留 MIN_GAP_SECONDS 不要接著又打一輪。
+        wait = max(MIN_GAP_SECONDS, interval - (time.monotonic() - started))
         # 平常就是乾等到下一輪；但「立即重新整理畫面」可以把這個等待提早叫醒
-        SCAN_NOW_EVENT.wait(timeout=interval)
+        SCAN_NOW_EVENT.wait(timeout=wait)
         SCAN_NOW_EVENT.clear()
