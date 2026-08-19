@@ -7,7 +7,7 @@ from email.mime.text import MIMEText
 
 from .accounts_store import ACCOUNTS, USERS_LOCK, find_user
 from .config_store import CONFIG
-from .history_db import extract_plate_number, get_watchers
+from .history_db import get_watchers
 from .logging_setup import logger
 from .paths import ALERTED_PATH
 
@@ -156,9 +156,8 @@ def send_watchlist_alerts(enriched):
     per_user = {}   # username -> {"first": [描述], "final": [描述]}
     new_keys = {}    # username -> {"first": {key}, "final": {key}}
     for u in _flatten_plates(enriched):
-        number_key = extract_plate_number(u["號牌"])
         category = u["號牌類別"]
-        watchers = get_watchers(number_key, category)
+        watchers = get_watchers(u["號牌"], category)
         if not watchers:
             continue
         for username in watchers:

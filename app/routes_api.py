@@ -2,6 +2,7 @@
 """JSON API 路由。"""
 
 import json
+import re
 import threading
 from datetime import datetime
 
@@ -82,8 +83,10 @@ def api_decided_list():
 @bp.route("/api/watchlist", methods=["GET", "POST", "DELETE"])
 @login_required
 def api_watchlist():
-    """個人追蹤清單。一律只操作自己的資料——使用者名稱取自 session，
-    不看請求內容，所以沒辦法藉由改參數去讀或改別人的清單。
+    """個人追蹤清單，以完整號牌為單位（PJY-8888 跟 BSA-8888 是兩筆）。
+
+    一律只操作自己的資料——使用者名稱取自 session，不看請求內容，
+    所以沒辦法藉由改參數去讀或改別人的清單。
     """
     username = session["username"]
 
@@ -91,20 +94,22 @@ def api_watchlist():
         return jsonify({"items": get_watchlist(username)})
 
     data = request.get_json(force=True, silent=True) or {}
-    number_key = str(data.get("number_key", "")).strip()
+    plate = str(data.get("plate", "")).strip().upper()
     category = str(data.get("category", "")).strip()
-    if not number_key or not category:
-        return jsonify({"ok": False, "error": "缺少號碼或車種"}), 400
-    if len(number_key) > 20 or len(category) > 50:
-        return jsonify({"ok": False, "error": "號碼或車種格式不正確"}), 400
+    if not plate or not category:
+        return jsonify({"ok": False, "error": "缺少號牌或車種"}), 400
+    # 追蹤的是完整號牌，來源網站的號牌實測都是英數與連字號、最長 8 碼，
+    # 給到 20 碼當緩衝，其他字元一律擋掉
+    if not re.fullmatch(r"[A-Z0-9-]{1,20}", plate) or len(category) > 50:
+        return jsonify({"ok": False, "error": "號牌或車種格式不正確"}), 400
 
     if request.method == "POST":
-        ok, err = add_watchlist(username, number_key, category)
+        ok, err = add_watchlist(username, plate, category)
         if not ok:
             return jsonify({"ok": False, "error": err}), 400
         return jsonify({"ok": True})
 
-    remove_watchlist(username, number_key, category)
+    remove_watchlist(username, plate, category)
     return jsonify({"ok": True})
 
 

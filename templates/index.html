@@ -55,6 +55,9 @@
       <option value="">全部監理站</option>
     </select>
     <input type="text" id="numberFilterInput" placeholder="輸入號碼篩選，例如：8888">
+    <select id="patternFilterSelect">
+      <option value="">全部號碼型態</option>
+    </select>
     <select id="sortSelect">
       <option value="">預設排序</option>
       <option value="deadline_asc">截止時間：近到遠</option>
@@ -66,7 +69,7 @@
   {% if logged_in %}
   <div style="margin-top:10px;">
     <label class="watch-filter"><input type="checkbox" id="onlyWatched"> ★ 只看我的追蹤</label>
-    <span class="hint" style="display:inline;margin-left:8px;">點各列的 ☆ 可加入追蹤，截止前會寄信提醒你</span>
+    <span class="hint" style="display:inline;margin-left:8px;">點各列的 ☆ 可加入追蹤，截止前會寄信提醒你（追蹤的是該面完整號牌，不含同數字的其他字首）</span>
   </div>
   {% endif %}
 </div>
@@ -106,6 +109,7 @@
 </div>
 
 <script src="/static/history-modal.js"></script>
+<script src="/static/plate-patterns.js"></script>
 <script>
 let latestData = { results: [] };
 
@@ -145,14 +149,10 @@ async function loadMyAlertThreshold() {
   }
 }
 
-// 追蹤清單以「數字＋車種」為單位，跟後端 extract_plate_number 的規則一致：
-// 取號牌結尾的數字，這樣同一個號碼換字首重新上架也還算同一個追蹤目標。
-function numberKeyOf(plate) {
-  const m = String(plate).match(/(\d+)\s*$/);
-  return m ? m[1] : String(plate);
-}
-
-let watchSet = new Set();  // "number_key|category"
+// 追蹤清單以「完整號牌＋車種」為單位，跟後端 watchlist.plate 一致：
+// PJY-8888 和 BSA-8888 是兩面不同的號牌，追蹤了哪一面就只有那一面會亮星號、
+// 只有那一面會寄提醒。同一個數字換字首重新上架時要重新追蹤。
+let watchSet = new Set();  // "plate|category"
 
 async function loadWatchlist() {
   if (!LOGGED_IN) return;
@@ -160,14 +160,14 @@ async function loadWatchlist() {
     const resp = await fetch('/api/watchlist');
     if (!resp.ok) return;
     const data = await resp.json();
-    watchSet = new Set((data.items || []).map(i => `${i.number_key}|${i.category}`));
+    watchSet = new Set((data.items || []).map(i => `${i.plate}|${i.category}`));
   } catch (e) {
     console.error('讀取追蹤清單失敗', e);
   }
 }
 
-async function toggleWatch(numberKey, category) {
-  const key = `${numberKey}|${category}`;
+async function toggleWatch(plate, category) {
+  const key = `${plate}|${category}`;
   const watching = watchSet.has(key);
   // 先更新畫面讓點擊有立即反應，失敗再還原
   if (watching) watchSet.delete(key); else watchSet.add(key);
@@ -176,7 +176,7 @@ async function toggleWatch(numberKey, category) {
     const resp = await fetch('/api/watchlist', {
       method: watching ? 'DELETE' : 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ number_key: numberKey, category }),
+      body: JSON.stringify({ plate, category }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.ok) {
@@ -308,6 +308,7 @@ function render() {
   const sectionFilter = document.getElementById('sectionFilterSelect').value;
   const stationFilter = document.getElementById('stationFilterSelect').value;
   const numberFilter = document.getElementById('numberFilterInput').value.trim();
+  const patternFilter = document.getElementById('patternFilterSelect').value;
   const onlyWatchedEl = document.getElementById('onlyWatched');
   const onlyWatched = !!(onlyWatchedEl && onlyWatchedEl.checked);
   let urgentItems = [];
@@ -321,7 +322,8 @@ function render() {
       // 由使用者自己勾要看的車種
       if (!selected.includes(p['號牌類別'])) continue;
       if (numberFilter && !p['號牌'].includes(numberFilter)) continue;
-      if (onlyWatched && !watchSet.has(`${numberKeyOf(p['號牌'])}|${p['號牌類別']}`)) continue;
+      if (!matchesPlatePattern(p['號牌'], patternFilter)) continue;
+      if (onlyWatched && !watchSet.has(`${p['號牌']}|${p['號牌類別']}`)) continue;
       if (isUrgent(p)) {
         urgentItems.push(`${station.section} ${station.station} ${p['號牌']}（剩 ${formatRemain(p.seconds_left)}）`);
       }
@@ -343,10 +345,9 @@ function render() {
   for (const { station, p } of pageItems) {
     const tr = document.createElement('tr');
     if (isUrgent(p)) tr.className = 'urgent';
-    const nk = numberKeyOf(p['號牌']);
-    const watching = watchSet.has(`${nk}|${p['號牌類別']}`);
+    const watching = watchSet.has(`${p['號牌']}|${p['號牌類別']}`);
     const watchCell = LOGGED_IN
-      ? `<td><button type="button" class="watch-btn${watching ? ' on' : ''}" data-number="${nk}" data-category="${p['號牌類別']}" aria-label="${watching ? '取消追蹤' : '加入追蹤'}">${watching ? '★' : '☆'}</button></td>`
+      ? `<td><button type="button" class="watch-btn${watching ? ' on' : ''}" data-plate="${p['號牌']}" data-category="${p['號牌類別']}" aria-label="${watching ? '取消追蹤' : '加入追蹤'}">${watching ? '★' : '☆'}</button></td>`
       : '';
     tr.innerHTML = `
       ${watchCell}
@@ -367,7 +368,9 @@ function render() {
   if (matched.length === 0) {
     const msg = selected.length === 0
       ? '請先在上方勾選要看的車種'
-      : (onlyWatched ? '你的追蹤清單裡目前沒有競標中的號碼' : '所選車種目前未競標中');
+      : onlyWatched ? '你的追蹤清單裡目前沒有競標中的號碼'
+      : patternFilter ? '所選車種目前沒有這種號碼型態在競標'
+      : '所選車種目前未競標中';
     tbody.innerHTML = `<tr class="empty-row"><td colspan="${COL_COUNT}">${msg}</td></tr>`;
   }
 
@@ -411,6 +414,7 @@ document.getElementById('resetFilters').addEventListener('click', () => {
   updateStationOptions();
   document.getElementById('stationFilterSelect').value = '';
   document.getElementById('numberFilterInput').value = '';
+  document.getElementById('patternFilterSelect').value = '';
   document.getElementById('sortSelect').value = '';
   const onlyWatchedEl = document.getElementById('onlyWatched');
   if (onlyWatchedEl) onlyWatchedEl.checked = false;
@@ -472,6 +476,10 @@ document.getElementById('numberFilterInput').addEventListener('input', () => {
   currentPage = 1;
   render();
 });
+document.getElementById('patternFilterSelect').addEventListener('change', () => {
+  currentPage = 1;
+  render();
+});
 document.getElementById('sortSelect').addEventListener('change', () => {
   currentPage = 1;
   render();
@@ -479,7 +487,7 @@ document.getElementById('sortSelect').addEventListener('change', () => {
 document.getElementById('tableBody').addEventListener('click', (e) => {
   const watchBtn = e.target.closest('.watch-btn');
   if (watchBtn) {
-    toggleWatch(watchBtn.dataset.number, watchBtn.dataset.category);
+    toggleWatch(watchBtn.dataset.plate, watchBtn.dataset.category);
     return;
   }
   const btn = e.target.closest('.hist-btn');
@@ -496,6 +504,7 @@ if (onlyWatchedBox) {
 
 initHistoryModal();
 
+fillPatternSelect(document.getElementById('patternFilterSelect'));
 syncChipStyles();
 // 先把追蹤清單、個人即將截止門檻讀進來再畫第一次表格，否則星號／急件標記會先閃一次
 // 預設值再變成正確的個人化結果

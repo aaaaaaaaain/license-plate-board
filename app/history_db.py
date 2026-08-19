@@ -57,20 +57,26 @@ def init_history_db():
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_decided_number ON decided_results(number_key, category, section, station)")
 
-    # 每個使用者自己收藏想追蹤的號碼。用「數字＋車種」當 key，跟歷史查詢一致，
-    # 這樣同一個號碼流標後換字首重新上架，使用者的追蹤不會斷掉。
+    # 每個使用者自己收藏想追蹤的號碼，以「完整號牌＋車種」為單位：PJY-8888 和 BSA-8888
+    # 是兩面不同的號牌，追蹤了哪一面就只提醒那一面。number_key 只是順便存著給查歷史用，
+    # 不參與比對。舊版是用「數字＋車種」，同數字不同字首會被當成同一個目標，
+    # 舊表沒有 plate 欄位就整張丟掉重建（跟上面 decided_results 同樣做法）。
+    old_watch_cols = [r[1] for r in conn.execute("PRAGMA table_info(watchlist)").fetchall()]
+    if old_watch_cols and "plate" not in old_watch_cols:
+        conn.execute("DROP TABLE watchlist")
     conn.execute("""
         CREATE TABLE IF NOT EXISTS watchlist (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             username TEXT NOT NULL,
+            plate TEXT NOT NULL,
             number_key TEXT NOT NULL,
             category TEXT NOT NULL,
             created_at TEXT NOT NULL,
-            UNIQUE(username, number_key, category)
+            UNIQUE(username, plate, category)
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(username)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_target ON watchlist(number_key, category)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_target ON watchlist(plate, category)")
     conn.commit()
     conn.close()
 
@@ -83,32 +89,41 @@ def get_watchlist(username):
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         rows = conn.execute(
-            "SELECT number_key, category, created_at FROM watchlist "
+            "SELECT plate, number_key, category, created_at FROM watchlist "
             "WHERE username=? ORDER BY created_at DESC",
             (username,),
         ).fetchall()
     finally:
         conn.close()
-    return [{"number_key": r[0], "category": r[1], "created_at": r[2]} for r in rows]
+    return [
+        {"plate": r[0], "number_key": r[1], "category": r[2], "created_at": r[3]}
+        for r in rows
+    ]
 
 
-def add_watchlist(username, number_key, category):
-    """加入追蹤。回傳 (成功與否, 錯誤訊息)。"""
+def add_watchlist(username, plate, category):
+    """加入追蹤。plate 是完整號牌（例如 PJY-8888）。回傳 (成功與否, 錯誤訊息)。"""
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         (count,) = conn.execute(
             "SELECT COUNT(*) FROM watchlist WHERE username=?", (username,)
         ).fetchone()
         already = conn.execute(
-            "SELECT 1 FROM watchlist WHERE username=? AND number_key=? AND category=?",
-            (username, number_key, category),
+            "SELECT 1 FROM watchlist WHERE username=? AND plate=? AND category=?",
+            (username, plate, category),
         ).fetchone()
         if not already and count >= MAX_WATCHLIST_PER_USER:
             return False, f"追蹤清單最多只能放 {MAX_WATCHLIST_PER_USER} 個號碼"
         conn.execute(
-            "INSERT OR IGNORE INTO watchlist (username, number_key, category, created_at) "
-            "VALUES (?, ?, ?, ?)",
-            (username, number_key, category, datetime.now().isoformat(timespec="seconds")),
+            "INSERT OR IGNORE INTO watchlist (username, plate, number_key, category, created_at) "
+            "VALUES (?, ?, ?, ?, ?)",
+            (
+                username,
+                plate,
+                extract_plate_number(plate),
+                category,
+                datetime.now().isoformat(timespec="seconds"),
+            ),
         )
         conn.commit()
     finally:
@@ -116,12 +131,12 @@ def add_watchlist(username, number_key, category):
     return True, None
 
 
-def remove_watchlist(username, number_key, category):
+def remove_watchlist(username, plate, category):
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         conn.execute(
-            "DELETE FROM watchlist WHERE username=? AND number_key=? AND category=?",
-            (username, number_key, category),
+            "DELETE FROM watchlist WHERE username=? AND plate=? AND category=?",
+            (username, plate, category),
         )
         conn.commit()
     finally:
@@ -137,13 +152,14 @@ def delete_user_watchlist(username):
         conn.close()
 
 
-def get_watchers(number_key, category):
-    """誰在追蹤這個號碼——寄個人化截止提醒時用。"""
+def get_watchers(plate, category):
+    """誰在追蹤這面號牌——寄個人化截止提醒時用。比對完整號牌，
+    所以追蹤 PJY-8888 的人不會收到 BSA-8888 的提醒。"""
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         rows = conn.execute(
-            "SELECT username FROM watchlist WHERE number_key=? AND category=?",
-            (number_key, category),
+            "SELECT username FROM watchlist WHERE plate=? AND category=?",
+            (plate, category),
         ).fetchall()
     finally:
         conn.close()
