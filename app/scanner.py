@@ -3,7 +3,6 @@
 
 import json
 import threading
-import time
 from datetime import datetime, timedelta
 
 from plate_bid_scanner import get_all_sections_and_stations, scan
@@ -117,7 +116,7 @@ def build_enriched_results(raw_results, alert_before_minutes):
 
 def run_scan_once():
     alert_before = CONFIG["alert_before_minutes"]
-    started = time.monotonic()
+    started = datetime.now()
 
     with STATE_LOCK:
         STATE["scanning"] = True
@@ -152,7 +151,8 @@ def run_scan_once():
             encoding="utf-8",
         )
         logger.info(f"[scan] 完成，{sum(len(i['plates']) for i in enriched)} 面號牌競標中，"
-                    f"其中 {len(urgent_list)} 面即將截止，耗時 {time.monotonic() - started:.1f} 秒")
+                    f"其中 {len(urgent_list)} 面即將截止，"
+                    f"耗時 {(datetime.now() - started).total_seconds():.1f} 秒")
 
     except Exception as e:
         with STATE_LOCK:
@@ -175,14 +175,26 @@ def background_loop():
             pass
 
     while True:
-        started = time.monotonic()
+        started = datetime.now()
         run_scan_once()
         interval = max(1, CONFIG["scan_interval_minutes"]) * 60
-        # 等待要扣掉這輪掃描自己花掉的時間，設定的間隔才是真的「每 N 分鐘一輪」。
-        # 原本是掃完才從頭睡滿 N 分鐘，實際節奏會變成 N 分鐘＋掃描耗時
-        # （設 3 分鐘、掃描 109 秒，log 上量到的間隔是 289 秒）。
-        # 萬一哪天掃描比間隔還久，也至少留 MIN_GAP_SECONDS 不要接著又打一輪。
-        wait = max(MIN_GAP_SECONDS, interval - (time.monotonic() - started))
-        # 平常就是乾等到下一輪；但「立即重新整理畫面」可以把這個等待提早叫醒
-        SCAN_NOW_EVENT.wait(timeout=wait)
+
+        # 下一輪的時刻用牆上時鐘算，不能用 time.monotonic()。這台機器的
+        # CLOCK_MONOTONIC 比實際時間慢約 7%（實測：sleep 20 秒，Windows 那邊
+        # 過了 21.5 秒；CLOCK_MONOTONIC_RAW 也是 21.4 秒，所以慢的是校正後的
+        # monotonic、不是硬體），直接把秒數交給 Event.wait 會讓每輪間隔被同樣
+        # 拉長——設 3 分鐘、log 上量到 199 秒就是這麼來的。牆上時鐘由 Hyper-V
+        # 每半分鐘跟 Windows 對時，是準的那一個。
+        #
+        # 扣掉這輪掃描自己花掉的時間，設定的間隔才是真的「每 N 分鐘一輪」；
+        # 萬一掃描比間隔還久，也至少留 MIN_GAP_SECONDS 不要接著又打一輪。
+        now = datetime.now()
+        deadline = max(started + timedelta(seconds=interval),
+                       now + timedelta(seconds=MIN_GAP_SECONDS))
+        # 分段等：每段重看一次時鐘，兩個時鐘差多少都會自己修正回來。
+        # 「立即重新整理畫面」照樣能在任何一段中途把它叫醒。
+        while True:
+            remaining = (deadline - datetime.now()).total_seconds()
+            if remaining <= 0 or SCAN_NOW_EVENT.wait(timeout=min(remaining, 15)):
+                break
         SCAN_NOW_EVENT.clear()

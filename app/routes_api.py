@@ -360,7 +360,8 @@ def api_accounts():
                 for u in ACCOUNTS
             ]
         # 待審核的排在最前面，才不用在一長串帳號裡找哪些要處理
-        users.sort(key=lambda u: (u["role"] != "pending", u["username"]))
+        # 需要你處理的（待審、還沒點驗證信）排在最前面
+        users.sort(key=lambda u: (u["role"] not in ("pending", "unverified"), u["username"]))
         return jsonify({"users": users})
 
     data = request.get_json(force=True, silent=True) or {}
@@ -389,14 +390,19 @@ def api_accounts():
 @login_required
 @super_required
 def api_approve_account(username):
-    """核准待審帳號，role 從 pending 變成 normal。"""
+    """核准帳號，role 變成 normal。
+
+    unverified 也能從這裡核准——驗證信被擋掉或收不到時，這是唯一的人工補救，
+    否則那個人要等 24 小時讓帳號過期才能重新註冊。
+    """
     with USERS_LOCK:
         target = find_user(username)
         if not target:
             return jsonify({"ok": False, "error": "找不到這個帳號"}), 404
-        if target["role"] != "pending":
-            return jsonify({"ok": False, "error": "這個帳號不是待審核狀態"}), 400
+        if target["role"] not in ("pending", "unverified"):
+            return jsonify({"ok": False, "error": "這個帳號不是待審核或待驗證狀態"}), 400
         target["role"] = "normal"
+        target.pop("verify_token", None)
         target["approved_at"] = datetime.now().isoformat(timespec="seconds")
         save_accounts(ACCOUNTS)
     logger.info(f"[accounts] 已核准帳號：{username}")

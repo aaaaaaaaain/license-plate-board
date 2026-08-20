@@ -28,8 +28,9 @@ def login_required(view):
             # 保險起見：如果帳號權限被改過，session 裡的舊權限也要跟著失效
             session.clear()
             return redirect(url_for("pages.login_page"))
-        if user["role"] == "pending":
-            # 核准後又被改回待審（或核准被撤銷）時，既有的 session 也要立刻失效
+        if user["role"] in ("pending", "unverified"):
+            # 核准後又被改回待審、或帳號被退回未驗證狀態時，既有的 session
+            # 也要立刻失效
             session.clear()
             return redirect(url_for("pages.login_page"))
         return view(*args, **kwargs)

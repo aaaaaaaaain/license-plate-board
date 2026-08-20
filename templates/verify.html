@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<title>帳號驗證 - 台灣監理站車牌競標即時看板</title>
+<link rel="icon" type="image/png" href="/static/plate-icon.png">
+<!-- iOS「加入主畫面」用的圖示：iOS 不吃 SVG favicon，一定要給 PNG，
+     沒給的話主畫面上會直接抓網頁截圖當圖示 -->
+<link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-title" content="車牌競標">
+<script src="/static/theme.js"></script>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="container" style="max-width:420px;margin:0 auto;">
+  <div style="padding-top:calc(64px + env(safe-area-inset-top));text-align:center;">
+    <div class="brand" style="justify-content:center;"><img src="/static/plate-icon.png" alt="" class="brand-icon"><h1 style="font-size:22px;">帳號驗證</h1></div>
+    <div class="meta">台灣監理站車牌競標即時看板</div>
+  </div>
+
+  {% if ok %}
+  <div class="panel" style="margin-top:20px;">
+    <div class="status-msg ok">驗證完成</div>
+    <p style="font-size:14px;line-height:1.7;">
+      帳號 <strong>{{ username }}</strong> 已經開通。<br>
+      現在就可以用你註冊時設定的密碼登入，開始收藏想追蹤的號碼。
+    </p>
+    <a href="/login" class="ios-btn-block primary" style="display:block;text-align:center;text-decoration:none;">前往登入</a>
+    <a href="/" class="ios-btn-block" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">回到看板</a>
+  </div>
+  {% else %}
+  <div class="panel" style="margin-top:20px;">
+    <div class="status-msg err">這個驗證連結沒有用</div>
+    <p style="font-size:14px;line-height:1.7;">
+      可能的原因：連結複製時被截斷、超過 24 小時已經過期，
+      或是這個帳號早就驗證過了（驗證過的連結會立刻失效）。<br><br>
+      已經驗證過就直接登入；過期的話用同一組帳號密碼重新註冊一次，系統會再寄一封新的驗證信。
+    </p>
+    <a href="/login" class="ios-btn-block primary" style="display:block;text-align:center;text-decoration:none;">前往登入</a>
+    <a href="/register" class="ios-btn-block" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">重新註冊</a>
+  </div>
+  {% endif %}
+</div>
+
+</body>
+</html>

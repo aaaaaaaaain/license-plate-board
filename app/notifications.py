@@ -99,7 +99,8 @@ def send_broadcast_alerts(enriched):
             (u["username"], u.get("email", ""), _user_alert_minutes(u),
              set(u.get("broadcast_categories") or []))
             for u in ACCOUNTS
-            if u.get("broadcast_enabled") and u.get("email") and u.get("role") != "pending"
+            if u.get("broadcast_enabled") and u.get("email")
+            and u.get("role") not in ("pending", "unverified")
         ]
     if not recipients:
         return
@@ -185,7 +186,7 @@ def send_watchlist_alerts(enriched):
             # 舊帳號沒有這個欄位，預設視為要收提醒
             wants_notify = bool(user.get("notify_enabled", True)) if user else False
         # 帳號被刪掉、還沒核准、自己關掉提醒、或沒填信箱的都跳過
-        if not recipient or role == "pending" or not wants_notify:
+        if not recipient or role in ("pending", "unverified") or not wants_notify:
             continue
         for stage, lines in by_stage.items():
             if not lines:

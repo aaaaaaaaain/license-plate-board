@@ -26,10 +26,11 @@
 
   {% if done %}
   <div class="panel" style="margin-top:20px;">
-    <div class="status-msg ok">申請已送出</div>
+    <div class="status-msg ok">驗證信已寄出</div>
     <p style="font-size:14px;line-height:1.7;">
-      你的帳號已經建立，目前正在等待管理員核准。<br>
-      核准之後就可以用剛才設定的帳號密碼登入，並開始收藏想追蹤的號碼。
+      已經寄一封信到 <strong>{{ email }}</strong>，點信裡的連結就完成註冊，
+      不需要等人核准。<br>
+      連結 24 小時內有效。沒收到的話先看看垃圾郵件匣，還是沒有就用同一組帳號密碼再註冊一次重寄。
     </p>
     <a href="/" class="ios-btn-block primary" style="display:block;text-align:center;text-decoration:none;">回到看板</a>
     <a href="/login" class="ios-btn-block" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">前往登入</a>
@@ -64,11 +65,11 @@
     {% endif %}
 
     <div class="meta" style="margin:4px 0 12px;line-height:1.6;">
-      註冊後需要管理員核准才能登入。看板與歷史查詢不用帳號就能看，
+      送出後會寄一封驗證信到你填的信箱，點連結就能登入。看板與歷史查詢不用帳號就能看，
       註冊是為了收藏追蹤號碼並接收截止提醒。
     </div>
 
-    <button type="submit" class="ios-btn-block primary">送出申請</button>
+    <button type="submit" class="ios-btn-block primary">送出並寄驗證信</button>
     <a href="/login" class="ios-btn-block" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">我已經有帳號了</a>
   </form>
   {% endif %}
