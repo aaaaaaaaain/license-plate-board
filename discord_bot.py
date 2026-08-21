@@ -14,6 +14,10 @@ import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
+from app.plate_patterns import (
+    PATTERN_LABELS, PATTERN_VALUES, matches_pattern, resolve_pattern,
+)
+
 logger = logging.getLogger("discord_bot")
 
 # 監理站官方的車牌標售入口（真正要出價、繳費的地方；本機器人只做查詢）
@@ -248,8 +252,9 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
         keyword="車種，可從清單直接點選（可留空）",
         number="想找的號碼或車牌，自行輸入，例如：8888 或 PJY-1111（可留空）",
         station="監理站，可從清單直接點選（可留空＝不限監理站）",
+        pattern="號碼型態，可從清單直接點選：鐵支／豹子／順子／對子／回文（可留空＝不限型態）",
     )
-    async def search_cmd(ctx, keyword: str = "", number: str = "", station: str = ""):
+    async def search_cmd(ctx, keyword: str = "", number: str = "", station: str = "", pattern: str = ""):
         keyword = keyword.strip()
         if keyword == "全部":
             keyword = ""
@@ -257,6 +262,13 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
         station = station.strip()
         if station == "全部":
             station = ""
+        pattern_text = pattern.strip()
+        pattern_value = resolve_pattern(pattern_text)
+        # 打錯型態就直接講，不然會被當成「不篩型態」，使用者看到的是一大串
+        # 沒篩過的結果，還以為自己的型態沒有半面在競標
+        if pattern_text and pattern_text != "全部" and not pattern_value:
+            await ctx.send(f"看不懂的號碼型態「{pattern_text}」，可用的有：{'、'.join(PATTERN_VALUES)}")
+            return
 
         matches = []
         for st, p in iter_plates():
@@ -266,9 +278,11 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
                 continue
             if number and number not in p["號牌"]:
                 continue
+            if not matches_pattern(p["號牌"], pattern_value):
+                continue
             matches.append((st, p))
 
-        label = "、".join(filter(None, [keyword, number, station])) or "全部"
+        label = "、".join(filter(None, [keyword, number, station, pattern_value])) or "全部"
         if not matches:
             await ctx.send(f"「{label}」目前未競標中")
             return
@@ -299,6 +313,19 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
     @search_cmd.autocomplete("keyword")
     async def keyword_autocomplete(interaction, current):
         return _filter_choices(categories, current, "全部車種")
+
+    @search_cmd.autocomplete("pattern")
+    async def pattern_autocomplete(interaction, current):
+        # 型態是固定的五種，不用查資料庫；選單顯示帶例子的標籤，送出的值是短名，
+        # 前綴指令 `!查詢 ... 鐵支` 打得出來的也是同一個值
+        current = (current or "").strip()
+        choices = [
+            app_commands.Choice(name=PATTERN_LABELS[v], value=v)
+            for v in PATTERN_VALUES if not current or current in PATTERN_LABELS[v]
+        ]
+        if not current or "全部" in current:
+            choices.insert(0, app_commands.Choice(name="全部型態", value="全部"))
+        return choices[:25]
 
     @bot.hybrid_command(name="歷史", aliases=["history"], description="查詢某個號碼的出價歷史紀錄（同號碼換字首也會一起追蹤）")
     @app_commands.describe(
@@ -409,7 +436,9 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
     async def help_cmd(ctx):
         await ctx.send(
             "**可用指令**\n"
-            f"`{prefix}查詢 <車種> <號碼> <監理站>`：三個都可留空、也都可以只填一個，斜線指令可直接點選車種／監理站；"
+            f"`{prefix}查詢 <車種> <號碼> <監理站> <號碼型態>`：四個都可留空、也都可以只填一個，"
+            f"斜線指令可直接點選車種／監理站／型態；型態有鐵支（8888）、豹子（1888）、順子（1234）、"
+            f"對子（1122）、回文（1221）五種；"
             f"結果下方的下拉選單可以挑一面號牌，直接看它的出價趨勢圖\n"
             f"`{prefix}歷史 <號牌> <車種> <監理站>`：查詢某個號牌的出價歷史，車種／監理站可留空＝不限，"
             f"例如 `{prefix}歷史 PJY-1111`，斜線指令可直接點選車種／監理站\n"

@@ -21,7 +21,8 @@
 <header>
   <div>
     <div class="brand"><img src="/static/plate-icon.png" alt="" class="brand-icon"><h1>出價歷史查詢</h1></div>
-    <div class="meta">依監理站、車種、日期、號碼篩選，查看每個號碼的出價走勢或決標紀錄</div>
+    <div class="meta">依監理站、車種、日期、號碼篩選，查看每個號碼的出價走勢或決標紀錄 ·
+      最後更新：<span id="lastUpdated">尚未更新</span></div>
   </div>
   <nav><button type="button" class="theme-toggle" id="themeToggle" aria-label="切換配色">🌓 自動</button> <a href="/">← 返回看板</a> {% if logged_in %}<span class="nav-username">{{ username }}</span> <a href="/logout">登出</a>{% else %}<a href="/login">登入</a>{% endif %}</nav>
 </header>
@@ -30,6 +31,9 @@
 
 <div class="toolbar">
   <div class="filter-row">
+    <select id="sectionFilter">
+      <option value="">全部地區</option>
+    </select>
     <select id="stationFilter">
       <option value="">全部監理站</option>
     </select>
@@ -40,9 +44,15 @@
       <option value="">全部日期</option>
     </select>
     <input type="text" id="numberFilter" placeholder="輸入號碼篩選，例如：8888">
+    <select id="patternFilter">
+      <option value="">全部號碼型態</option>
+    </select>
+    <!-- 預設開在「已決標紀錄」：一個梯次結標到下一梯次上架之間，來源網站是完全
+         空的（2026-08-21 全國就掛了一整天 0 面），這時開在「競標中」只會看到一片
+         空白；決標紀錄則是永遠都有東西可看。 -->
     <select id="viewModeFilter">
+      <option value="decided" selected>已決標紀錄</option>
       <option value="active">競標中</option>
-      <option value="decided">已決標紀錄</option>
     </select>
     <select id="sortFilter">
       <option value="">預設排序（最新在前）</option>
@@ -59,7 +69,7 @@
   <div id="statsChart"></div>
 </div>
 
-<div class="ios-list-header" id="listHeader">競標中</div>
+<div class="ios-list-header" id="listHeader">已決標紀錄</div>
 <div class="ios-list-group" id="numberList"></div>
 <div id="pagination" class="pagination-row"></div>
 
@@ -81,9 +91,21 @@
 </div>
 
 <script src="/static/history-modal.js"></script>
+<script src="/static/plate-patterns.js"></script>
 <script>
 let allItems = [];
 let decidedItems = [];
+
+// 掃描器當下真的抓到的號牌（`號牌|車種|監理站`）。history-list 給的是資料庫裡
+// 出現過的所有號牌，一面號牌從來源網站消失、又因為決標判定的防呆沒被判成決標
+// （同一輪整批消失就不判），就會一直留在這份清單裡——價格停在底價、last_seen
+// 停在前一天，畫面上卻跟還在競標的長得一模一樣。
+let liveKeys = null;
+
+// 自動更新的間隔跟背景掃描一樣（{{ scan_interval_minutes }} 分鐘）——掃描沒跑完
+// 之前重拉也拿不到新東西。
+const REFRESH_MS = {{ scan_interval_minutes }} * 60 * 1000;
+let lastLoadedAt = 0;
 
 function currentMode() {
   return document.getElementById('viewModeFilter').value;
@@ -117,6 +139,30 @@ function decidedFor(it) {
   return d;
 }
 
+function liveKeyOf(plate, category, station) {
+  return `${plate}|${category}|${station}`;
+}
+
+function buildLiveKeys(data) {
+  const keys = new Set();
+  for (const st of (data && data.results) || []) {
+    for (const p of st.plates || []) {
+      keys.add(liveKeyOf(p['號牌'], p['號牌類別'], st.station));
+    }
+  }
+  // 整批 0 筆是來源網站維護時段（不是全部結標），回 null ＝這次不拿它來篩；
+  // /api/data 抓不到時也是 null。寧可多顯示幾面已經下架的，也不要整頁清空。
+  return keys.size ? keys : null;
+}
+
+// last_seen 不能拿來判斷「是不是還在競標」：record_bid_changes 只在出價或次數
+// 變動時才寫一列，所以一面沒人加價的號牌 last_seen 會停在好幾天前，實際上還在
+// 競標（PKX-6789 就是這樣：只有 08-19 一筆紀錄，08-21 仍在競標清單上）。
+function isLive(it) {
+  if (!liveKeys) return true;
+  return liveKeys.has(liveKeyOf(it.plate, it.category, it.station));
+}
+
 function renderActiveRow(it) {
   const when = `最後 ${it.last_seen ? it.last_seen.replace('T', ' ') : '-'}`;
   return `
@@ -136,12 +182,15 @@ function renderActiveRow(it) {
 }
 
 function renderDecidedRow(it) {
+  // 字首跟競標中那排一樣放在第二行。舊紀錄回推不出字首的會是空的，就不顯示這一段
+  // （同站同數字同時有兩面號牌時，靠它才分得出兩列是兩面號牌、不是重複紀錄）。
+  const plate = it.plate ? `${it.plate} · ` : '';
   return `
-    <div class="ios-row number-row" data-plate="${it.number_key}" data-category="${it.category}" data-section="${it.section}" data-station="${it.station}">
+    <div class="ios-row number-row" data-plate="${it.plate || it.number_key}" data-category="${it.category}" data-section="${it.section}" data-station="${it.station}">
       <div>
         <div style="font-weight:600;">號碼 ${it.number_key}　<span class="hint" style="display:inline;">${it.category}</span></div>
         <div class="hint" style="margin:2px 0 0;">
-          ${it.section} ${it.station} · 決標時間 ${it.decided_at ? it.decided_at.replace('T', ' ') : '-'}
+          ${plate}${it.section} ${it.station} · 決標時間 ${it.decided_at ? it.decided_at.replace('T', ' ') : '-'}
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
@@ -184,6 +233,12 @@ function matchesNumber(it, keyword) {
   return (it.number_key || '').includes(keyword) || (it.plate || '').includes(keyword);
 }
 
+// 號碼型態（鐵支／豹子／順子…）：決標紀錄沒有完整號牌，兩種模式都用 number_key
+// 這串數字去比，型態本來就只看數字，字首字母不影響結果。
+function matchesPattern(it, value) {
+  return matchesPlatePattern(it.number_key || it.plate || '', value);
+}
+
 // 排序的兩個欄位在兩種模式下叫不同名字：競標中看「最後更新」和「目前出價」，
 // 已決標看「決標時間」和「決標價」。取值時各自對應，排序選項才能兩邊共用。
 function sortTimeValue(it) {
@@ -199,10 +254,12 @@ const SORTERS = {
 };
 
 function renderList() {
+  const section = document.getElementById('sectionFilter').value;
   const station = document.getElementById('stationFilter').value;
   const category = document.getElementById('categoryFilter').value;
   const date = document.getElementById('dateFilter').value;
   const number = document.getElementById('numberFilter').value.trim();
+  const pattern = document.getElementById('patternFilter').value;
   const mode = currentMode();
   const dataset = currentDataset();
   const list = document.getElementById('numberList');
@@ -224,11 +281,13 @@ function renderList() {
     : it => !date || (it.days || []).includes(date);
 
   const filtered = dataset.filter(it =>
-    (mode === 'decided' || !decidedFor(it)) &&
+    (mode === 'decided' || (!decidedFor(it) && isLive(it))) &&
+    (!section || it.section === section) &&
     (!station || it.station === station) &&
     (!category || it.category === category) &&
     matchesDate(it) &&
-    matchesNumber(it, number)
+    matchesNumber(it, number) &&
+    matchesPattern(it, pattern)
   );
 
   // 預設排序＝後端給的順序（最後更新／決標時間由新到舊），所以只在有選才排。
@@ -408,22 +467,57 @@ function renderStatsSummary(items) {
 }
 
 function renderStats() {
+  const section = document.getElementById('sectionFilter').value;
   const station = document.getElementById('stationFilter').value;
   const category = document.getElementById('categoryFilter').value;
   const number = document.getElementById('numberFilter').value.trim();
+  const pattern = document.getElementById('patternFilter').value;
   const filtered = decidedItems.filter(it =>
+    (!section || it.section === section) &&
     (!station || it.station === station) &&
     (!category || it.category === category) &&
-    matchesNumber(it, number)
+    matchesNumber(it, number) &&
+    matchesPattern(it, pattern)
   );
   const stats = computeDailyStats(filtered);
   renderStatsSummary(filtered);
   renderStatsChart(stats);
 }
 
+// 地區 -> 該地區出現過的監理站。跟看板一樣先挑地區再挑站，全國有二十幾個
+// 監理站，攤平成一排選單要捲很久。用資料裡實際有紀錄的站建（不是 /api/stations
+// 那份全國目錄）：歷史頁只列得出有進過資料庫的號牌，把沒紀錄的站放進選單，
+// 選了也只會得到一片空白。
+let stationsBySection = new Map();
+
+function updateStationOptions() {
+  const stationSel = document.getElementById('stationFilter');
+  const section = document.getElementById('sectionFilter').value;
+  const current = stationSel.value;
+  const stations = [...new Set(section
+    ? [...(stationsBySection.get(section) || [])]
+    : [...stationsBySection.values()].flatMap(set => [...set])
+  )].sort();
+  stationSel.innerHTML = '<option value="">全部監理站</option>';
+  for (const s of stations) {
+    const opt = document.createElement('option');
+    opt.value = s;
+    opt.textContent = s;
+    stationSel.appendChild(opt);
+  }
+  // 原本選的站不屬於新選的地區就退回「全部監理站」，不然兩個條件互相矛盾＝永遠 0 筆
+  if (stations.includes(current)) stationSel.value = current;
+}
+
 function populateFilters() {
   const combined = [...allItems, ...decidedItems];
-  const stations = [...new Set(combined.map(i => i.station))].sort();
+  stationsBySection = new Map();
+  for (const i of combined) {
+    if (!i.section) continue;
+    if (!stationsBySection.has(i.section)) stationsBySection.set(i.section, new Set());
+    stationsBySection.get(i.section).add(i.station);
+  }
+  const sections = [...stationsBySection.keys()].sort();
   const categories = [...new Set(combined.map(i => i.category))].sort();
   // 用每面號牌實際有紀錄的所有日期（days），不是只有最後一次更新那天——
   // 不然某些「當天有在競標、但之後才結標」的日期根本不會出現在選單裡。
@@ -432,17 +526,22 @@ function populateFilters() {
     ...decidedItems.map(i => i.decided_at ? i.decided_at.slice(0, 10) : null),
   ].filter(Boolean))].sort().reverse();
 
-  const stationSel = document.getElementById('stationFilter');
+  const sectionSel = document.getElementById('sectionFilter');
   const categorySel = document.getElementById('categoryFilter');
   const dateSel = document.getElementById('dateFilter');
-  stationSel.innerHTML = '<option value="">全部監理站</option>';
+  // 自動更新會把這幾個下拉整個重建，先記住目前選的值，重建完再選回去；
+  // 沒了那個選項（例如那天的紀錄被清掉）時 value 會自動變成空字串＝全部。
+  // 監理站那個交給 updateStationOptions()：它讀的是下拉現在的值，所以要等
+  // 地區選回去、而且在重建監理站選項之前呼叫。
+  const keep = { section: sectionSel.value, category: categorySel.value, date: dateSel.value };
+  sectionSel.innerHTML = '<option value="">全部地區</option>';
   categorySel.innerHTML = '<option value="">全部車種</option>';
   dateSel.innerHTML = '<option value="">全部日期</option>';
-  for (const s of stations) {
+  for (const s of sections) {
     const opt = document.createElement('option');
     opt.value = s;
     opt.textContent = s;
-    stationSel.appendChild(opt);
+    sectionSel.appendChild(opt);
   }
   for (const c of categories) {
     const opt = document.createElement('option');
@@ -456,26 +555,43 @@ function populateFilters() {
     opt.textContent = d;
     dateSel.appendChild(opt);
   }
+  sectionSel.value = keep.section;
+  categorySel.value = keep.category;
+  dateSel.value = keep.date;
+  updateStationOptions();
 }
 
-async function loadList() {
+// silent＝自動更新：不要把畫面上已經在看的清單換成「載入中」／「載入失敗」，
+// 整頁閃一下比晚幾分鐘更新更擾人。
+async function loadList(silent) {
   const list = document.getElementById('numberList');
-  list.innerHTML = '<div class="hint" style="text-align:center;padding:24px 0;">載入中...</div>';
+  if (!silent) list.innerHTML = '<div class="hint" style="text-align:center;padding:24px 0;">載入中...</div>';
   try {
-    const [resp1, resp2] = await Promise.all([
+    // /api/data 失敗不能拖垮整頁（清單本身還是看得到），所以單獨接住它的錯誤
+    const [resp1, resp2, resp3] = await Promise.all([
       fetch('/api/history-list'),
       fetch('/api/decided-list'),
+      fetch('/api/data').catch(() => null),
     ]);
     const data1 = await resp1.json();
     const data2 = await resp2.json();
     allItems = data1.items || [];
     decidedItems = data2.items || [];
+    let liveData = null;
+    try {
+      liveData = resp3 ? await resp3.json() : null;
+    } catch (e) {
+      liveData = null;
+    }
+    liveKeys = buildLiveKeys(liveData);
+    document.getElementById('lastUpdated').textContent = (liveData && liveData.last_updated) || '尚未更新';
+    lastLoadedAt = Date.now();
     buildDecidedMap();
     populateFilters();
     renderList();
     renderStats();
   } catch (e) {
-    list.innerHTML = '<div class="hint" style="text-align:center;padding:24px 0;">載入失敗</div>';
+    if (!silent) list.innerHTML = '<div class="hint" style="text-align:center;padding:24px 0;">載入失敗</div>';
   }
 }
 
@@ -483,15 +599,35 @@ document.getElementById('numberList').addEventListener('click', (e) => {
   const row = e.target.closest('.number-row');
   if (row) openHistory(row.dataset.plate, row.dataset.category, row.dataset.section, row.dataset.station);
 });
+document.getElementById('sectionFilter').addEventListener('change', () => {
+  updateStationOptions();
+  currentPage = 1; renderList(); renderStats();
+});
 document.getElementById('stationFilter').addEventListener('change', () => { currentPage = 1; renderList(); renderStats(); });
 document.getElementById('categoryFilter').addEventListener('change', () => { currentPage = 1; renderList(); renderStats(); });
 document.getElementById('dateFilter').addEventListener('change', () => { currentPage = 1; renderList(); });
 document.getElementById('numberFilter').addEventListener('input', () => { currentPage = 1; renderList(); renderStats(); });
+document.getElementById('patternFilter').addEventListener('change', () => { currentPage = 1; renderList(); renderStats(); });
 document.getElementById('viewModeFilter').addEventListener('change', () => { currentPage = 1; renderList(); });
 document.getElementById('sortFilter').addEventListener('change', () => { currentPage = 1; renderList(); });
 
 initHistoryModal();
+fillPatternSelect(document.getElementById('patternFilter'));
 loadList();
+
+// 只在分頁看得到的時候更新：這頁一次要抓兩份完整清單（約 2.9 MB），
+// 丟在背景的分頁一直重抓沒有意義。
+setInterval(() => {
+  if (document.visibilityState === 'visible') loadList(true);
+}, REFRESH_MS);
+
+// 切回這個分頁時，如果已經超過一個掃描週期沒更新就馬上補一次，
+// 不然看到的還是離開前那份，還要再等滿一輪才會變。
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && Date.now() - lastLoadedAt >= REFRESH_MS) {
+    loadList(true);
+  }
+});
 </script>
 
 </body>

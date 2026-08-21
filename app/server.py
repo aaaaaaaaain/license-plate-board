@@ -1,10 +1,11 @@
 # -*- coding: utf-8 -*-
 """建立 Flask app、掛上路由，以及程式進入點 main()。"""
 
+import gzip
 import threading
 from datetime import timedelta
 
-from flask import Flask
+from flask import Flask, request
 
 from . import logging_setup  # noqa: F401  # 要在其他模組開始記 log 之前先設定好 handler
 from .accounts_store import ACCOUNTS  # noqa: F401  # 觸發載入，讓啟動流程跟舊版一致
@@ -41,6 +42,61 @@ if CONFIG["server"].get("behind_proxy"):
     from werkzeug.middleware.proxy_fix import ProxyFix
 
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
+
+
+# 會壓縮的型別：只挑文字類。圖片（PNG／JPEG）本身已經壓過，再壓一次只是白花 CPU。
+_GZIP_TYPES = {
+    "application/json",
+    "application/javascript",
+    "text/javascript",
+    "text/html",
+    "text/css",
+    "text/plain",
+    "image/svg+xml",
+}
+# 太小的回應壓了反而變大（gzip 自己就有十幾個位元組的標頭），也不值得那個 CPU
+_GZIP_MIN_BYTES = 1024
+
+
+@app.after_request
+def _compress(response):
+    """把文字類回應壓成 gzip。
+
+    歷史頁一次要抓 /api/history-list 加 /api/decided-list，未壓縮是 2.87 MB；
+    這兩份是重複性極高的 JSON，壓完只剩約 120 KB。本機沒感覺，但這個站是走
+    cloudflared 對外的，手機網路差很多。waitress 不會自己做這件事。
+    """
+    ctype = (response.content_type or "").split(";")[0].strip().lower()
+    if ctype not in _GZIP_TYPES:
+        return response
+
+    # 不管這次有沒有真的壓，只要這個網址「可能」被壓就要標 Vary，否則中間的快取
+    # 有機會把壓過的內容餵給不支援 gzip 的客戶端。已經有 Vary（例如 Cookie）就接上去。
+    vary = response.headers.get("Vary", "")
+    if "accept-encoding" not in vary.lower():
+        response.headers["Vary"] = f"{vary}, Accept-Encoding" if vary else "Accept-Encoding"
+
+    if "gzip" not in request.headers.get("Accept-Encoding", "").lower():
+        return response
+    # direct_passthrough 是 send_file 那種還沒讀進記憶體的回應（static 檔案就是），
+    # 這時候 get_data() 會直接丟例外；有 ETag 的也跳過，改了內容 ETag 就對不上，
+    # 會弄壞 304。static 檔案本來就有 ETag 快取，少壓這幾十 KB 不影響。
+    if (response.direct_passthrough
+            or response.status_code < 200 or response.status_code >= 300
+            or "Content-Encoding" in response.headers
+            or "ETag" in response.headers):
+        return response
+
+    data = response.get_data()
+    if len(data) < _GZIP_MIN_BYTES:
+        return response
+    packed = gzip.compress(data, 6)
+    if len(packed) >= len(data):
+        return response
+    response.set_data(packed)
+    response.headers["Content-Encoding"] = "gzip"
+    response.headers["Content-Length"] = str(len(packed))
+    return response
 
 
 @app.after_request

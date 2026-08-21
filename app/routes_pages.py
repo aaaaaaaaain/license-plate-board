@@ -257,6 +257,8 @@ def index():
 def history_page():
     return render_template(
         "history.html",
+        # 歷史頁的自動更新跟著背景掃描的節奏走，間隔改設定就一起改
+        scan_interval_minutes=CONFIG["scan_interval_minutes"],
         logged_in=bool(session.get("username")),
         username=session.get("username"),
     )

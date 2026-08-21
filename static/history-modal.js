@@ -168,7 +168,7 @@ function renderDecidedBanner(decided) {
   el.style.display = 'block';
   el.innerHTML = `
     ✅ 已決標：<strong>${decided.final_price} 元</strong>
-    <div class="hint" style="margin-top:2px;">決標時間 ${decided.decided_at ? decided.decided_at.replace('T', ' ') : '-'}</div>
+    <div class="hint" style="margin-top:2px;">${decided.plate ? decided.plate + ' · ' : ''}決標時間 ${decided.decided_at ? decided.decided_at.replace('T', ' ') : '-'}</div>
   `;
 }
 

@@ -21,6 +21,83 @@ def extract_plate_number(plate):
     return m.group(1) if m else plate
 
 
+# 決標紀錄的表結構。搬遷函式和 init 兩邊都要建，寫成一份才不會漂掉。
+# plate 允許 NULL：舊資料回推不出字首的那幾列只能留空。
+_DECIDED_DDL = """
+    CREATE TABLE IF NOT EXISTS decided_results (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        plate TEXT,
+        number_key TEXT NOT NULL,
+        category TEXT,
+        section TEXT,
+        station TEXT,
+        final_price TEXT,
+        decided_at TEXT NOT NULL,
+        UNIQUE(number_key, category, section, station, decided_at, plate)
+    )
+"""
+
+
+def _migrate_decided_add_plate(conn):
+    """舊的決標紀錄只有數字，補上完整號牌。
+
+    字首從 bid_history 回推，三步由準到不準：
+      1. 決標時間就是那面號牌最後一列出價紀錄的時間（4340b39 之後的寫法），
+         所以「最後一次出價剛好等於決標時間」而且只有一面對得上的就是它。
+      2. 整組（數字＋車種＋轄區＋監理站）從頭到尾只有一面號牌，那就是那面。
+      3. 取決標時間之前最後一次出現、時間最接近的那面——4340b39 以前
+         decided_at 記的是「發現它不見的那一輪」，會比最後一次出價晚一個掃描間隔。
+    三步都推不出來就留 NULL。寧可空著，也不要掛一個猜的字首上去：決標紀錄是
+    事後要人工看的東西，錯的字首比沒有字首更難發現。
+    """
+    spans = {}
+    for nk, cat, sec, stn, plate, last in conn.execute(
+        "SELECT number_key, category, section, station, plate, MAX(recorded_at) "
+        "FROM bid_history GROUP BY number_key, category, section, station, plate"
+    ):
+        spans.setdefault((nk, cat, sec, stn), []).append((last, plate))
+
+    def guess(nk, cat, sec, stn, decided_at):
+        candidates = spans.get((nk, cat, sec, stn))
+        if not candidates:
+            return None
+        exact = [plate for last, plate in candidates if last == decided_at]
+        if len(exact) == 1:
+            return exact[0]
+        if exact:
+            return None  # 兩面同時結標，分不出哪一列是哪一面
+        if len(candidates) == 1:
+            return candidates[0][1]
+        before = [(last, plate) for last, plate in candidates if last <= decided_at]
+        if not before:
+            return None
+        newest = max(last for last, _ in before)
+        names = [plate for last, plate in before if last == newest]
+        return names[0] if len(names) == 1 else None
+
+    rows = conn.execute(
+        "SELECT id, number_key, category, section, station, final_price, decided_at "
+        "FROM decided_results"
+    ).fetchall()
+    conn.execute("DROP TABLE decided_results")
+    conn.execute(_DECIDED_DDL)
+    filled = 0
+    for rid, nk, cat, sec, stn, price, decided_at in rows:
+        plate = guess(nk, cat, sec, stn, decided_at)
+        filled += plate is not None
+        conn.execute(
+            "INSERT INTO decided_results "
+            "(id, plate, number_key, category, section, station, final_price, decided_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (rid, plate, nk, cat, sec, stn, price, decided_at),
+        )
+    conn.commit()
+    logger.info(
+        f"[migrate] 決標紀錄加上完整號牌：{len(rows)} 列，回填 {filled} 列，"
+        f"{len(rows) - filled} 列推不出字首留空"
+    )
+
+
 def init_history_db():
     conn = sqlite3.connect(HISTORY_DB_PATH)
     conn.execute("""
@@ -39,22 +116,17 @@ def init_history_db():
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_bid_history_number ON bid_history(number_key, category)")
 
-    # 決標紀錄只留數字、金額、時間，不需要字首字母（換字首不影響是不是同一個號碼）
+    # 決標紀錄連完整號牌一起存。只留數字的話，同一個監理站、同車種同時上架兩面
+    # 尾數相同、字首不同的號牌（桃園 2026-08-06 的 CDR-1688 和 CFG-1688）各自結標
+    # 後，兩列長得一模一樣，看不出是兩面號牌還是同一面被重複寫進去。
+    # number_key 仍然留著，而且查詢一律還是用它——「換字首重新上架算同一個號碼的
+    # 下一輪」那條規則沒有變，字首只是補上去讓紀錄認得出是哪一面。
+    # UNIQUE 也含 plate：不含的話，兩面同時結標（最後一次出價落在同一輪）只會寫進
+    # 一列，另一面被 INSERT OR IGNORE 默默吃掉。
     old_cols = [r[1] for r in conn.execute("PRAGMA table_info(decided_results)").fetchall()]
-    if old_cols and "plate" in old_cols:
-        conn.execute("DROP TABLE decided_results")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS decided_results (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            number_key TEXT NOT NULL,
-            category TEXT,
-            section TEXT,
-            station TEXT,
-            final_price TEXT,
-            decided_at TEXT NOT NULL,
-            UNIQUE(number_key, category, section, station, decided_at)
-        )
-    """)
+    if old_cols and "plate" not in old_cols:
+        _migrate_decided_add_plate(conn)
+    conn.execute(_DECIDED_DDL)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_decided_number ON decided_results(number_key, category, section, station)")
 
     # 每個使用者自己收藏想追蹤的號碼，以「完整號牌＋車種」為單位：PJY-8888 和 BSA-8888
@@ -239,6 +311,14 @@ def detect_decided(enriched, recorded_at, failed_stations=None):
                 f"——先不判定決標，連續 {MASS_MISSING_HOLD_ROUNDS} 輪都這樣才視為真的整批結標"
                 f"（目前第 {_MASS_MISSING_ROUNDS} 輪）"
             )
+            # 按住不判，但這輪新看到的號牌還是要收進基準。少了這一步，在按住期間
+            # 才上架、又在按住結束前就結標的號牌從頭到尾不在基準裡，missing_keys
+            # 永遠不會包含它們，於是決標紀錄一直沒寫、歷史頁把它們永遠列在
+            # 「競標中」（2026-08-21 一次清出 14 面這種幽靈）。
+            # 用聯集而不是覆寫：基準本身要保留，不然就等於把整批消失的號牌
+            # 直接放生，那正是按住這幾輪要防的事。
+            PREV_ACTIVE_KEYS |= current_keys
+            save_prev_active_keys(PREV_ACTIVE_KEYS)
             return
         logger.warning(
             f"[decided] 已經連續 {_MASS_MISSING_ROUNDS} 輪只剩 {len(current_keys)} 面，"
@@ -271,9 +351,10 @@ def detect_decided(enriched, recorded_at, failed_stations=None):
                 # 整批消失要按住幾輪影響——按住三輪才確認的話，用發現時間會晚快 20 分鐘。
                 conn.execute(
                     "INSERT OR IGNORE INTO decided_results "
-                    "(number_key, category, section, station, final_price, decided_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (number_key, category, section, station_name, price, last_seen or recorded_at),
+                    "(plate, number_key, category, section, station, final_price, decided_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (plate, number_key, category, section, station_name, price,
+                     last_seen or recorded_at),
                 )
             conn.commit()
         finally:
@@ -334,7 +415,7 @@ def get_decided_results():
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         rows = conn.execute("""
-            SELECT number_key, category, section, station, final_price, decided_at
+            SELECT number_key, category, section, station, final_price, decided_at, plate
             FROM decided_results
             ORDER BY decided_at DESC
         """).fetchall()
@@ -343,7 +424,7 @@ def get_decided_results():
     return [
         {
             "number_key": r[0], "category": r[1], "section": r[2], "station": r[3],
-            "final_price": r[4], "decided_at": r[5],
+            "final_price": r[4], "decided_at": r[5], "plate": r[6],
         }
         for r in rows
     ]
@@ -481,7 +562,7 @@ def get_plate_history(plate, category=None, section=None, station=None):
             params,
         ).fetchall()
         decided_row = conn.execute(
-            f"SELECT final_price, decided_at FROM decided_results "
+            f"SELECT final_price, decided_at, plate FROM decided_results "
             f"WHERE {where_sql} ORDER BY decided_at DESC LIMIT 1",
             params,
         ).fetchone()
@@ -499,10 +580,13 @@ def get_plate_history(plate, category=None, section=None, station=None):
     ]
     decided = None
     if decided_row:
-        final_price, decided_at = decided_row
+        final_price, decided_at, decided_plate = decided_row
         has_newer_activity = any(h["recorded_at"] > decided_at for h in history)
         if not has_newer_activity:
-            decided = {"final_price": final_price, "decided_at": decided_at}
+            # 帶上得標的那一面完整號牌：這張趨勢圖是照數字查的，同一個數字換過
+            # 字首的話會有好幾面，只講金額看不出最後是哪一面標走的
+            decided = {"final_price": final_price, "decided_at": decided_at,
+                       "plate": decided_plate}
     return history, decided
 
 
