@@ -58,15 +58,26 @@ wsl -e bash -lc 'ps -eo cmd | grep "[s]leep infinity"'
 改 `app/history_db.py` 前務必理解這幾條，它們都是踩過坑之後定下來的：
 
 - **`number_key` 是號牌結尾的數字**（`extract_plate_number`）。好號流標後重新上架
-  常換字首，大家追蹤的是數字，所以歷史、追蹤清單、決標紀錄都用「數字＋車種」當
-  身分；但 `bid_history` 仍用完整號牌＋轄區＋監理站分組，因為同站同車種曾同時出現
-  尾數相同、字首不同的兩面。
+  常換字首，大家追蹤的是數字，所以查詢一律用「數字＋車種」當身分。但三張表都另外
+  存完整號牌，各有各的用途：`bid_history` 用它分組（同站同車種曾同時出現尾數相同、
+  字首不同的兩面），`watchlist` 用它當追蹤目標（追的是那一面，不是同尾數的別面），
+  `decided_results` 用它認出是哪一面標走的。
+- **`decided_results` 的 `UNIQUE` 一定要含 `plate`**。不含的話，兩面同尾數號牌最後
+  一次出價落在同一輪時，第二列會被 `INSERT OR IGNORE` 默默吃掉——V2.5 以前發生過
+  四次，那幾列的字首已經救不回來。資料庫裡還留著 5 列 `plate` 是 NULL 的舊紀錄，
+  是回推不出字首、刻意留空不猜的，不要當成 bug 去修。`init_history_db` 裡那段搬遷是
+  「**沒有** plate 欄位才跑」，別再寫回舊版那句「有 plate 欄位就 DROP 整張表」。
 - **`record_bid_changes` 只在出價或次數變動時寫一列**。所以資料庫裡不會有連續重複
   的快照，任何「合併重複紀錄」的邏輯都是多餘的，而且會弄丟真實金額。
-- **決標判定有三層保護**（`detect_decided`）：抓取失敗的站不判、單輪消失超過一半的
-  號牌不判（整批消失＝網站維護）、`PREV_ACTIVE_KEYS` 存檔到 `data/prev_active.json`
-  所以重啟不會產生判定盲區。少了任何一層就會寫進假決標，而決標紀錄是寫進資料庫、
-  事後要人工清的。
+- **決標判定有三層保護**（`detect_decided`）：抓取失敗的站不判；一輪消失超過一半先
+  按住不判，連續三輪都這樣才當作真的整批結標（維護和整批結標在當下分不出來），而且
+  按住期間要用 `|=` 把這輪看到的號牌併進基準——覆寫會把剛消失的那批放生，不併則是
+  那幾輪才上架的號牌永遠進不了基準、永遠不會被判決標；`PREV_ACTIVE_KEYS` 存檔到
+  `data/prev_active.json`，所以重啟不會產生判定盲區。少了任何一層就會寫進假決標，而
+  決標紀錄是寫進資料庫、事後要人工清的。
+- **`last_seen` 不能拿來判斷「還在不在競標」**。承上，沒人加價的號牌 `last_seen`
+  會停在好幾天前，實際上還在競標。要判斷得比對 `/api/data` 當下抓到的號牌（歷史頁的
+  `liveKeys` 就是這樣做的），而且整批 0 筆要當成「不確定」，不是「全部結標」。
 - **`seed_relist_if_needed`** 在號碼決標後又重新上架時，補一列 `bid_count=0`、價格是
   上一輪決標價的種子列當新一輪趨勢起點。看到 `第 0 次` 的紀錄就是它。
 
@@ -79,6 +90,13 @@ wsl -e bash -lc 'ps -eo cmd | grep "[s]leep infinity"'
 - 流標重新上架時次數從頭數，累加上一輪的次數當偏移量，讓新一輪接在舊的右邊。
 - 所有紀錄都停在同一次出價時退回照筆數平均分佈，否則每個點會疊在同一個 x。
 - 價格全部相同時，用價格的一成當縱軸範圍並置中，不然格線會擠成幾乎一樣的數字。
+
+## 號碼型態也是兩份實作
+
+`app/plate_patterns.py`（Discord `/查詢`）和 `static/plate-patterns.js`（網頁下拉）
+是同一套鐵支／豹子／順子／對子／回文的規則，改任何一種型態的定義要兩邊一起改，
+否則同一個號碼在網頁和 Discord 會被歸到不同型態。兩邊都只看號牌結尾的數字，換字首
+不會換型態；微型電動二輪車的號牌是 `AM88888` 這種五碼數字、沒有連字號，判定吃得下。
 
 ## Discord bot
 
@@ -95,6 +113,12 @@ wsl -e bash -lc 'ps -eo cmd | grep "[s]leep infinity"'
   `:root[data-theme="dark"]`，深色那組變數只維護一份。任何需要判斷深淺的 JS 要讀
   `document.documentElement.dataset.theme`，讀 `prefers-color-scheme` 會跟切換鈕不同步。
 - iOS 加入主畫面吃的是 `apple-touch-icon`（PNG、不透明底），SVG favicon 它不認。
+- 文字回應在 `app/server.py` 的 `after_request` 壓成 gzip（歷史頁那兩支清單 API 加起來
+  3.1 MB，壓完剩 155 KB）。**有 `ETag` 的和 `direct_passthrough` 的要跳過**：改了內容
+  ETag 就對不上、會弄壞 304，而 `send_file` 那種還沒讀進記憶體的回應呼叫 `get_data()`
+  會直接丟例外。不論這次有沒有真的壓，都要標 `Vary: Accept-Encoding`。
+- 歷史頁會自己定時重抓（跟掃描同節奏、只在分頁看得見時跑）。重建下拉選單前要先記住
+  目前選的值、建完再選回去，不然每次自動更新都會把使用者選的條件清掉。
 
 ## 機密與版控
 
@@ -104,7 +128,8 @@ wsl -e bash -lc 'ps -eo cmd | grep "[s]leep infinity"'
   `Co-Authored-By`。看 `git log` 就是範例。
 - GitHub 上的 `main` 是每個版本一個快照提交（`v1.0`、`v2.0` 標籤），本地 `master`
   保留完整開發歷史，兩邊歷史獨立。發版時從 `origin/main` 開分支、`git read-tree -u
-  --reset master` 套用目前程式碼、提交成 `V2.x: ...`，不要 force push。
+  --reset master` 套用目前程式碼、提交成 `V2.x: ...`（只改文件那種就發 `V2.x.y`），
+  打 annotated tag，不要 force push。
 
 ## 驗證
 
