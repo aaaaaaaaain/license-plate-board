@@ -64,8 +64,9 @@ wsl -e bash -lc 'ps -eo cmd | grep "[s]leep infinity"'
   `decided_results` 用它認出是哪一面標走的。
 - **`decided_results` 的 `UNIQUE` 一定要含 `plate`**。不含的話，兩面同尾數號牌最後
   一次出價落在同一輪時，第二列會被 `INSERT OR IGNORE` 默默吃掉——V2.5 以前發生過
-  四次，那幾列的字首已經救不回來。資料庫裡還留著 5 列 `plate` 是 NULL 的舊紀錄，
-  是回推不出字首、刻意留空不猜的，不要當成 bug 去修。`init_history_db` 裡那段搬遷是
+  四次，那幾列的字首已經救不回來。那 5 列 `plate` 是 NULL 的舊紀錄（回推不出字首、
+  當時刻意留空不猜的）已於 2026-08-29 依使用者要求刪除，現在三張表每列都有完整號牌。
+  `init_history_db` 裡那段搬遷是
   「**沒有** plate 欄位才跑」，別再寫回舊版那句「有 plate 欄位就 DROP 整張表」。
 - **`record_bid_changes` 只在出價或次數變動時寫一列**。所以資料庫裡不會有連續重複
   的快照，任何「合併重複紀錄」的邏輯都是多餘的，而且會弄丟真實金額。
