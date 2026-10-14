@@ -2,11 +2,11 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#101012" media="(prefers-color-scheme: dark)">
 <title>註冊帳號 - 台灣監理站車牌競標即時看板</title>
 <link rel="icon" type="image/png" href="/static/plate-icon.png">
 <!-- iOS「加入主畫面」用的圖示：iOS 不吃 SVG favicon，一定要給 PNG，
@@ -20,20 +20,20 @@
 
 <div class="container" style="max-width:420px;margin:0 auto;">
   <div style="padding-top:calc(64px + env(safe-area-inset-top));text-align:center;">
-    <div class="brand" style="justify-content:center;"><img src="/static/plate-icon.png" alt="" class="brand-icon"><h1 style="font-size:22px;">註冊帳號</h1></div>
+    <div class="brand" style="justify-content:center;"><img src="/static/plate-icon.png" alt="" class="brand-icon"><h1 style="font-size:var(--fs-title2);">註冊帳號</h1></div>
     <div class="meta">台灣監理站車牌競標即時看板</div>
   </div>
 
   {% if done %}
   <div class="panel" style="margin-top:20px;">
     <div class="status-msg ok">驗證信已寄出</div>
-    <p style="font-size:14px;line-height:1.7;">
+    <p style="font-size:var(--fs-subhead);line-height:1.7;">
       已經寄一封信到 <strong>{{ email }}</strong>，點信裡的連結就完成註冊，
       不需要等人核准。<br>
       連結 24 小時內有效。沒收到的話先看看垃圾郵件匣，還是沒有就用同一組帳號密碼再註冊一次重寄。
     </p>
     <a href="/" class="ios-btn-block primary" style="display:block;text-align:center;text-decoration:none;">回到看板</a>
-    <a href="/login" class="ios-btn-block" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">前往登入</a>
+    <a href="/login" class="ios-btn-block secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">前往登入</a>
   </div>
   {% else %}
   <form method="post" class="panel" style="margin-top:20px;">
@@ -70,7 +70,7 @@
     </div>
 
     <button type="submit" class="ios-btn-block primary">送出並寄驗證信</button>
-    <a href="/login" class="ios-btn-block" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">我已經有帳號了</a>
+    <a href="/login" class="ios-btn-block secondary" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">我已經有帳號了</a>
   </form>
   {% endif %}
 </div>

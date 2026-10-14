@@ -2,11 +2,11 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#101012" media="(prefers-color-scheme: dark)">
 <title>台灣監理站車牌競標即時看板</title>
 <link rel="icon" type="image/png" href="/static/plate-icon.png">
 <!-- iOS「加入主畫面」用的圖示：iOS 不吃 SVG favicon，一定要給 PNG，
@@ -47,6 +47,7 @@
     <button id="refreshNow" class="primary">立即重新整理畫面</button>
     <span id="scanningTag"><span class="dot"></span>背景掃描中...</span>
   </div>
+  <div id="boardMsg" class="status-msg"></div>
   <div class="filter-row" style="margin-top:12px;">
     <select id="sectionFilterSelect">
       <option value="">全部地區</option>
@@ -54,7 +55,7 @@
     <select id="stationFilterSelect">
       <option value="">全部監理站</option>
     </select>
-    <input type="text" id="numberFilterInput" placeholder="輸入號碼篩選，例如：8888">
+    <input type="text" id="numberFilterInput" placeholder="輸入號碼篩選，例如：8888" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="search">
     <select id="patternFilterSelect">
       <option value="">全部號碼型態</option>
     </select>
@@ -182,12 +183,12 @@ async function toggleWatch(plate, category) {
     if (!resp.ok || !data.ok) {
       if (watching) watchSet.add(key); else watchSet.delete(key);
       render();
-      alert(data.error || '操作失敗');
+      showToast(data.error || '追蹤操作失敗');
     }
   } catch (e) {
     if (watching) watchSet.add(key); else watchSet.delete(key);
     render();
-    alert('操作失敗：' + e);
+    showToast('追蹤操作失敗：' + e);
   }
 }
 
@@ -422,17 +423,27 @@ document.getElementById('resetFilters').addEventListener('click', () => {
   currentPage = 1;
   render();
 });
+// 「立即重新整理」的錯誤就顯示在按鈕正下方，不用 alert() 跳窗
+function showBoardMsg(text) {
+  const el = document.getElementById('boardMsg');
+  el.className = 'status-msg err';
+  el.textContent = text;
+}
+function hideBoardMsg() {
+  document.getElementById('boardMsg').className = 'status-msg';
+}
 document.getElementById('refreshNow').addEventListener('click', async () => {
   const btn = document.getElementById('refreshNow');
   const originalText = btn.textContent;
   const baselineUpdated = latestData.last_updated;
   btn.disabled = true;
   btn.textContent = '重新掃描中...';
+  hideBoardMsg();
   try {
     const resp = await fetch('/api/scan-now', { method: 'POST' });
     const result = await resp.json();
     if (!resp.ok || !result.ok) {
-      alert(result.error || '無法立即重新掃描，請稍後再試');
+      showBoardMsg(result.error || '無法立即重新掃描，請稍後再試');
       return;
     }
     // 輪詢到這一輪掃描真的跑完（last_updated 換了新的、且不再是 scanning 狀態）為止，
@@ -449,7 +460,7 @@ document.getElementById('refreshNow').addEventListener('click', async () => {
     render();
   } catch (e) {
     console.error('立即重新掃描失敗', e);
-    alert('立即重新掃描失敗：' + e);
+    showBoardMsg('立即重新掃描失敗：' + e);
   } finally {
     btn.disabled = false;
     btn.textContent = originalText;

@@ -437,6 +437,12 @@ def record_bid_changes(enriched, recorded_at):
 
     先一次查出每面號牌「最新一筆紀錄的出價/次數」，再逐面比對是否有變化——
     避免每一面號牌都各自查一次資料庫。
+
+    寫入後要同步更新 last_values，不能只在函式一開始查一次：分頁抓取在清單
+    被同時大量增修時可能把同一面號牌重複收進同一次 enriched（2026-08-06 那批
+    108 面好字號集體上架時就發生過，一面重複到 25 次）。last_values 沒跟著更新
+    的話，同一次掃描裡第 2 筆以後比對到的還是掃描前的舊值，會被誤判成「又變了」
+    而重複寫入。
     """
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
@@ -474,6 +480,7 @@ def record_bid_changes(enriched, recorded_at):
                     (plate, number_key, section, station_name, category,
                      price, bid_count, p["決標時間"], recorded_at),
                 )
+                last_values[key] = (price, bid_count)
         conn.commit()
     finally:
         conn.close()

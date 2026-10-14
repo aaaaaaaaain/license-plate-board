@@ -2,11 +2,11 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#101012" media="(prefers-color-scheme: dark)">
 <title>設定 - 台灣監理站車牌競標即時看板</title>
 <link rel="icon" type="image/png" href="/static/plate-icon.png">
 <!-- iOS「加入主畫面」用的圖示：iOS 不吃 SVG favicon，一定要給 PNG，
@@ -281,6 +281,19 @@ if (IS_SUPER) {
   setHMField('alertBeforeHours', 'alertBeforeMinutes', {{ config.alert_before_minutes }});
 }
 
+// 送出期間鎖住按鈕、文字換成進行中，避免連按好幾次送出好幾次
+async function withBusy(btn, busyText, fn) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = busyText;
+  try {
+    await fn();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
+}
+
 function showStatus(ok, text) {
   const el = document.getElementById('statusMsg');
   el.className = 'status-msg ' + (ok ? 'ok' : 'err');
@@ -330,8 +343,7 @@ async function loadMySettings() {
   }
 }
 
-document.getElementById('saveMyBtn').addEventListener('click', async () => {
-  showMyStatus(true, '儲存中...');
+document.getElementById('saveMyBtn').addEventListener('click', (e) => withBusy(e.currentTarget, '儲存中…', async () => {
   try {
     const resp = await fetch('/api/my-settings', {
       method: 'POST',
@@ -353,12 +365,9 @@ document.getElementById('saveMyBtn').addEventListener('click', async () => {
   } catch (e) {
     showMyStatus(false, '儲存失敗：' + e);
   }
-});
+}));
 
-document.getElementById('myTestBtn').addEventListener('click', async () => {
-  const btn = document.getElementById('myTestBtn');
-  btn.disabled = true;
-  showMyStatus(true, '寄送測試郵件中...');
+document.getElementById('myTestBtn').addEventListener('click', (e) => withBusy(e.currentTarget, '寄送中…', async () => {
   try {
     const resp = await fetch('/api/my-test-email', { method: 'POST' });
     const d = await resp.json();
@@ -369,15 +378,12 @@ document.getElementById('myTestBtn').addEventListener('click', async () => {
     }
   } catch (e) {
     showMyStatus(false, '寄送失敗：' + e);
-  } finally {
-    btn.disabled = false;
   }
-});
+}));
 
 loadMySettings();
 
-document.getElementById('saveBtn').addEventListener('click', async () => {
-  showStatus(true, '儲存中...');
+document.getElementById('saveBtn').addEventListener('click', (e) => withBusy(e.currentTarget, '儲存中…', async () => {
   try {
     const resp = await fetch('/api/settings', {
       method: 'POST',
@@ -395,16 +401,15 @@ document.getElementById('saveBtn').addEventListener('click', async () => {
   } catch (e) {
     showStatus(false, '儲存失敗：' + e);
   }
-});
+}));
 
 {% if is_super %}
-document.getElementById('testBtn').addEventListener('click', async () => {
+document.getElementById('testBtn').addEventListener('click', (e) => withBusy(e.currentTarget, '寄送中…', async () => {
   const testRecipient = document.getElementById('testRecipient').value.trim();
   if (!testRecipient) {
     showStatus(false, '請先填寫「測試信收件人」');
     return;
   }
-  showStatus(true, '寄送測試郵件中...');
   try {
     const payload = collectPayload();
     payload.email.to_addrs = [testRecipient];
@@ -422,7 +427,7 @@ document.getElementById('testBtn').addEventListener('click', async () => {
   } catch (e) {
     showStatus(false, '寄送失敗：' + e);
   }
-});
+}));
 {% endif %}
 
 {% if is_super %}
@@ -470,7 +475,7 @@ async function loadAccounts() {
   }).join('');
 }
 
-document.getElementById('addAccountBtn').addEventListener('click', async () => {
+document.getElementById('addAccountBtn').addEventListener('click', (e) => withBusy(e.currentTarget, '新增中…', async () => {
   const username = document.getElementById('newUsername').value.trim();
   const email = document.getElementById('newEmail').value.trim();
   const password = document.getElementById('newPassword').value;
@@ -493,7 +498,7 @@ document.getElementById('addAccountBtn').addEventListener('click', async () => {
   } catch (e) {
     showAccountMsg(false, '新增失敗：' + e);
   }
-});
+}));
 
 document.getElementById('accountList').addEventListener('click', async (e) => {
   const approveBtn = e.target.closest('.approve-account-btn');

@@ -9,8 +9,27 @@
   const KEY = 'theme-preference';
   const MODES = ['auto', 'light', 'dark'];
   const LABELS = { auto: '🌓 自動', light: '☀️ 淺色', dark: '🌙 深色' };
-  const BAR_COLOR = { light: '#F2F2F7', dark: '#000000' };
+  // 狀態列要跟頁面最上面的顏色一樣：深色的 header 是 rgba(20,20,22,.82) 疊在黑底上，
+  // 實際是 #101012。頁面底色不一樣的（登入頁）在 <html> 上用 data-bar-light／
+  // data-bar-dark 自己指定。
+  const BAR_COLOR = { light: '#F2F2F7', dark: '#101012' };
   const media = window.matchMedia('(prefers-color-scheme: dark)');
+
+  // iOS Safari 預設不套用 :active（要頁面上有 touchstart 監聽才會），再加上
+  // style.css 把點擊高亮設成透明，iPhone 上按任何按鈕都會完全沒有反應。
+  // 空的監聽器就夠了；passive 不會擋到捲動。
+  document.addEventListener('touchstart', function () {}, { passive: true });
+
+  // 切換深淺色時整頁顏色淡過去（.theme-transition 在 style.css），
+  // 不要瞬間整片翻白／翻黑。只在「切換」時掛，第一次畫面不需要。
+  let fadeTimer = null;
+  function applyWithFade(pref) {
+    const root = document.documentElement;
+    root.classList.add('theme-transition');
+    apply(pref);
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(function () { root.classList.remove('theme-transition'); }, 300);
+  }
 
   function read() {
     try {
@@ -34,7 +53,9 @@
     metas.forEach(function (m, i) {
       if (i === 0) {
         m.removeAttribute('media');
-        m.setAttribute('content', BAR_COLOR[mode]);
+        const own = mode === 'dark' ? document.documentElement.dataset.barDark
+          : document.documentElement.dataset.barLight;
+        m.setAttribute('content', own || BAR_COLOR[mode]);
       } else {
         m.remove();
       }
@@ -49,14 +70,14 @@
   window.cycleTheme = function () {
     const next = MODES[(MODES.indexOf(read()) + 1) % MODES.length];
     write(next);
-    apply(next);
+    applyWithFade(next);
   };
 
   apply(read());
 
   // 停在「自動」時，系統在深淺之間切換要跟著變（例如 iOS 的日落自動深色）
   media.addEventListener('change', function () {
-    if (read() === 'auto') apply('auto');
+    if (read() === 'auto') applyWithFade('auto');
   });
 
   document.addEventListener('DOMContentLoaded', function () {

@@ -1,56 +1,494 @@
 <!DOCTYPE html>
-<html lang="zh-Hant">
+<html lang="zh-Hant" data-bar-light="#e8e8e8" data-bar-dark="#2b2e33">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
-<meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#e8e8e8" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#2b2e33" media="(prefers-color-scheme: dark)">
 <title>登入 - 台灣監理站車牌競標即時看板</title>
 <link rel="icon" type="image/png" href="/static/plate-icon.png">
 <!-- iOS「加入主畫面」用的圖示：iOS 不吃 SVG favicon，一定要給 PNG，
      沒給的話主畫面上會直接抓網頁截圖當圖示 -->
 <link rel="apple-touch-icon" sizes="180x180" href="/static/apple-touch-icon.png">
 <meta name="apple-mobile-web-app-title" content="車牌競標">
+<!-- theme.js 要在畫面前跑，把 auto/light/dark 解析成 data-theme。這頁不吃 style.css，
+     擬物化樣式全部寫在下面的 <style> 裡，只多維護一份深色變數。 -->
 <script src="/static/theme.js"></script>
-<link rel="stylesheet" href="/static/style.css">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  /* 手機轉橫向時 iOS 自己放大字，關掉 */
+  html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+  /* 點下去不等 300ms（不會被雙擊放大）；長按按鈕不要選到字、不要跳拷貝選單 */
+  button, a { touch-action: manipulation; }
+  button {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+
+  /* 擬物化配色。淺色是原稿的 #e8e8e8 灰底，深色另寫一組，跟著 theme.js 的 data-theme 切。
+     文字色都要對底色 4.5:1 以上：原本的 #9a9a9a／#838383 只有 2.3／3.1:1。 */
+  :root {
+    --neu-bg: #e8e8e8;
+    --neu-shadow-dark: #c3c3c3;
+    --neu-shadow-light: #ffffff;
+    --neu-text: #4a4a4a;
+    --neu-text-soft: #636363;
+    --neu-icon: #636363;
+    --neu-inset-light: rgba(255, 255, 255, .95);
+    --neu-inset-dark: rgba(184, 190, 204, .45);
+    --neu-accent: #a10f0f;
+    --neu-accent-soft: #b21414;
+    --neu-accent-deep: #7c0d0d;
+    --neu-btn-text: #5f5f5f;
+    --neu-btn-hi: #f8f8f8;
+    --neu-btn-lo: #c8c8c8;
+    --neu-ring: rgba(255, 255, 255, .65);
+    --neu-ring-inset-dark: rgba(163, 163, 163, .18);
+    --neu-ring-inset-light: rgba(255, 255, 255, .7);
+    --neu-focus-a: rgba(120, 10, 10, .35);
+    --neu-focus-b: rgba(212, 55, 55, .25);
+
+    /* 字級和圓角跟 style.css 同一組值（這頁不吃 style.css，所以另外寫一份） */
+    --fs-caption1: .75rem;    /* 12 */
+    --fs-footnote: .8125rem;  /* 13 */
+    --fs-subhead: .9375rem;   /* 15 */
+    --fs-input: 1rem;         /* 16：iOS 輸入框低於 16px 會自動放大 */
+    --fs-title1: 1.75rem;     /* 28 */
+    --fs-large: 2.125rem;     /* 34 */
+    --r-sheet: 20px;
+    --r-card: 14px;
+    --r-control: 10px;
+  }
+  :root[data-theme="dark"] {
+    --neu-bg: #2b2e33;
+    --neu-shadow-dark: #202226;
+    --neu-shadow-light: #363a41;
+    --neu-text: #e7e7e7;
+    --neu-text-soft: #9a9fa5;
+    --neu-icon: #9aa0a6;
+    --neu-inset-light: rgba(255, 255, 255, .05);
+    --neu-inset-dark: rgba(0, 0, 0, .5);
+    --neu-accent: #ff6f66;
+    --neu-accent-soft: #e0524d;
+    --neu-accent-deep: #b83a35;
+    --neu-btn-text: #b8bcc2;
+    --neu-btn-hi: #363a41;
+    --neu-btn-lo: #202226;
+    --neu-ring: rgba(255, 255, 255, .10);
+    --neu-ring-inset-dark: rgba(0, 0, 0, .35);
+    --neu-ring-inset-light: rgba(255, 255, 255, .06);
+    --neu-focus-a: rgba(0, 0, 0, .45);
+    --neu-focus-b: rgba(255, 111, 102, .30);
+  }
+  :root[data-theme="light"] { color-scheme: light; }
+  :root[data-theme="dark"] { color-scheme: dark; }
+
+  /* 跟 style.css 同一組系統字型 */
+  html { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang TC", "Microsoft JhengHei", "Helvetica Neue", sans-serif; }
+  /* iPhone 的「文字大小」設定（說明見 style.css） */
+  @supports (font: -apple-system-body) and (-webkit-touch-callout: none) {
+    html { font: -apple-system-body; }
+  }
+
+  body {
+    /* svh：網址列還在時的可視高度。100vh 在手機上比畫面高一截，卡片會偏下、
+       一進頁面就能捲動 */
+    min-height: 100vh;
+    min-height: 100svh;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: max(40px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+      max(40px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    background: var(--neu-bg);
+    color: var(--neu-text);
+    overflow-x: hidden;
+  }
+
+  /* ===== 翻卡透視 ===== */
+  .flip-scene { width: 520px; height: 520px; perspective: 1800px; }
+
+  .flip-card {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    transition: transform .5s cubic-bezier(.22, 1, .36, 1);
+    transform-style: preserve-3d;
+  }
+  .flip-scene.flipped .flip-card { transform: rotateY(180deg); }
+
+  /* ===== 擬物化圓卡（正反兩面共用） ===== */
+  .glass-circle {
+    position: absolute;
+    inset: 0;
+    width: 520px;
+    height: 520px;
+    border-radius: 50%;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: var(--neu-bg);
+    box-shadow:
+      -22px -22px 44px var(--neu-shadow-light),
+      22px 22px 50px var(--neu-shadow-dark),
+      -1px -1px 1px rgba(255, 255, 255, .5) inset;
+    transition: opacity .06s linear;
+  }
+  .glass-circle.back { transform: rotateY(180deg); }
+
+  /* 只讓當下該看到的那一面顯示、可點。刻意不用 backface-visibility——
+     深色模式下部分瀏覽器有 box-shadow 時不會確實藏住背面，會透出鏡像字。
+     卡片本體照樣 3D 翻轉，兩面另外靠 opacity 交叉淡入淡出。 */
+  .flip-scene:not(.flipped) .glass-circle.back,
+  .flip-scene.flipped .glass-circle.front {
+    opacity: 0;
+    pointer-events: none;
+  }
+  /* 轉出去的那一面 .06s 內收掉，轉進來的那一面等卡片轉過 90°（這條曲線約在
+     第 65ms）才淡入——兩面重疊的那一下才不會透出鏡像字 */
+  .flip-scene.flipped .glass-circle.back,
+  .flip-scene:not(.flipped) .glass-circle.front {
+    transition: opacity .2s ease .06s;
+  }
+
+  .glass-circle::before {
+    content: "";
+    position: absolute;
+    inset: 12px;
+    border-radius: 50%;
+    border: 1px solid var(--neu-ring);
+    box-shadow:
+      inset 3px 3px 9px var(--neu-ring-inset-dark),
+      inset -3px -3px 9px var(--neu-ring-inset-light);
+    pointer-events: none;
+  }
+
+  /* ===== 表單 ===== */
+  .login-form { position: relative; width: 290px; z-index: 10; }
+
+  .brandline {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 7px;
+    margin-bottom: 10px;
+    color: var(--neu-text-soft);
+    font-size: var(--fs-caption1);
+    font-weight: 500;
+  }
+  .brandline img { width: 18px; height: 18px; }
+  :root[data-theme="dark"] .brandline img { filter: invert(1); }
+
+  .login-form h1 {
+    color: var(--neu-text);
+    font-size: var(--fs-large);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    margin-bottom: 22px;
+    text-align: center;
+    text-shadow:
+      1px 1px 1px rgba(255, 255, 255, .9),
+      -2px -2px 1px rgba(163, 163, 163, .25);
+  }
+  :root[data-theme="dark"] .login-form h1 { text-shadow: none; }
+
+  .input-box { position: relative; margin-bottom: 14px; }
+
+  .input-box .ico {
+    position: absolute;
+    left: 17px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 16px;
+    height: 16px;
+    color: var(--neu-icon);
+    transition: color .2s ease;
+    pointer-events: none;
+  }
+  .input-box:focus-within .ico { color: var(--neu-accent); }
+
+  /* focus 時只換陰影，不位移——打字的時候輸入框不該自己動 */
+  .input-box input {
+    width: 100%;
+    height: 46px;
+    padding: 0 18px 0 44px;
+    border: none;
+    outline: none;
+    background: var(--neu-bg);
+    color: var(--neu-text);
+    font-family: inherit;
+    font-size: var(--fs-input);
+    font-weight: 500;
+    border-radius: var(--r-control);
+    box-shadow:
+      inset -6px -6px 10px var(--neu-inset-light),
+      inset 6px 6px 10px var(--neu-inset-dark);
+    transition: box-shadow .2s ease;
+  }
+  .input-box.has-toggle input { padding-right: 60px; }
+  .input-box input::placeholder { color: var(--neu-text-soft); font-weight: 400; }
+
+  .input-box input:focus {
+    box-shadow:
+      inset 3px 3px 6px var(--neu-focus-a),
+      inset -3px -3px 6px var(--neu-focus-b);
+  }
+
+  /* 撐滿輸入框右側整塊（46px 高、52px 寬），不是只有兩個字那麼大 */
+  .pw-toggle {
+    position: absolute;
+    right: 0;
+    top: 0;
+    bottom: 0;
+    min-width: 52px;
+    padding: 0 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    color: var(--neu-text-soft);
+    font-family: inherit;
+    font-size: var(--fs-footnote);
+    font-weight: 500;
+    cursor: pointer;
+    transition: color .2s ease, opacity .2s ease;
+  }
+
+  .status-msg {
+    display: none;
+    margin: -2px 0 14px;
+    padding: 9px 14px;
+    border-radius: var(--r-control);
+    font-size: var(--fs-footnote);
+    line-height: 1.5;
+    text-align: center;
+    box-shadow:
+      inset 3px 3px 6px var(--neu-inset-dark),
+      inset -3px -3px 6px var(--neu-inset-light);
+  }
+  .status-msg.err { display: block; color: var(--neu-accent); }
+
+  .login-form button[type="submit"] {
+    position: relative;
+    width: 100%;
+    height: 46px;
+    display: block;
+    margin: 4px auto 0;
+    overflow: hidden;
+    border: none;
+    outline: none;
+    border-radius: var(--r-card);
+    cursor: pointer;
+    font-family: inherit;
+    font-size: var(--fs-subhead);
+    font-weight: 600;
+    color: var(--neu-btn-text);
+    background: var(--neu-bg);
+    box-shadow: -7px -7px 12px var(--neu-btn-hi), 7px 7px 12px var(--neu-btn-lo);
+    transition: color .4s ease, background .4s ease, box-shadow .4s ease, transform .25s ease;
+  }
+  /* 掃過按鈕的那道光：動 transform 不動 left，不會每一格都重排版面 */
+  .login-form button[type="submit"]::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 40%;
+    height: 100%;
+    background: linear-gradient(115deg, transparent, rgba(255, 255, 255, .55), transparent);
+    transform: translateX(-150%) skewX(-20deg);
+    transition: transform .6s ease;
+  }
+  /* 按下：立刻生效，不吃上面那幾條 transition */
+  .login-form button[type="submit"]:active {
+    transform: scale(.97);
+    transition: none;
+    box-shadow:
+      inset 5px 5px 10px rgba(60, 5, 5, .4),
+      inset -5px -5px 10px rgba(212, 175, 55, .2);
+  }
+  .pw-toggle:active, .link-btn:active { opacity: .6; transition: none; }
+
+  /* 懸停效果只給滑鼠：手機點一下會觸發 :hover，而且會一直停在那個狀態 */
+  @media (hover: hover) and (pointer: fine) {
+    .pw-toggle:hover { color: var(--neu-accent); }
+    .login-form button[type="submit"]:hover::before { transform: translateX(325%) skewX(-20deg); }
+    .login-form button[type="submit"]:hover {
+      transform: translateY(-2px);
+      color: #f5e9c8;
+      background: linear-gradient(155deg, var(--neu-accent-soft) 0%, var(--neu-accent-deep) 100%);
+      box-shadow:
+        0 10px 22px rgba(120, 10, 10, .35),
+        -5px -5px 15px rgba(255, 255, 255, .25),
+        inset 0 1px 1px rgba(255, 255, 255, .25);
+    }
+    .login-form button[type="submit"]:hover:active { transform: scale(.97); }
+  }
+
+  .signup-text {
+    text-align: center;
+    margin-top: 8px;
+    font-size: var(--fs-footnote);
+    color: var(--neu-text-soft);
+  }
+  /* 「註冊新帳號／回登入」：看起來是一段字，但點擊範圍有 44px 高 */
+  .link-btn {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+    padding: 0 6px;
+    border: none;
+    background: none;
+    color: var(--neu-accent);
+    font: inherit;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity .2s ease;
+  }
+
+  /* 註冊面欄位多一個，整體收緊一點 */
+  .glass-circle.back .login-form h1 { font-size: var(--fs-title1); margin-bottom: 14px; }
+  .glass-circle.back .input-box { margin-bottom: 10px; }
+  .glass-circle.back .signup-text { margin-top: 4px; }
+
+  .foot-note {
+    margin: 24px auto 0;
+    max-width: 320px;
+    text-align: center;
+    color: var(--neu-text-soft);
+    font-size: var(--fs-footnote);
+    line-height: 1.7;
+  }
+  .foot-note a { color: var(--neu-accent); text-decoration: none; }
+
+  /* ===== 窄螢幕：不用圓形 =====
+     圓形卡片在手機上只放得下 190～220px 寬的表單，字得縮到 10～12px 才塞得進去。
+     改成滿版的圓角卡片，字級跟桌機一樣。兩面疊在同一個 grid 格子裡，卡片高度
+     自動等於比較高的那一面（註冊面），翻面時大小不會跳。 */
+  @media (max-width: 600px) {
+    body {
+      padding: max(24px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right))
+        max(24px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+    }
+    .flip-scene { width: 100%; max-width: 400px; height: auto; }
+    .flip-card { display: grid; height: auto; }
+    .glass-circle {
+      position: relative;
+      inset: auto;
+      grid-area: 1 / 1;
+      width: auto;
+      height: auto;
+      padding: 36px 24px 28px;
+      border-radius: var(--r-sheet);
+      box-shadow:
+        -12px -12px 24px var(--neu-shadow-light),
+        12px 12px 28px var(--neu-shadow-dark),
+        -1px -1px 1px rgba(255, 255, 255, .5) inset;
+    }
+    /* 內圈跟外框同心：外框 20 − 內縮 12 = 8 */
+    .glass-circle::before { border-radius: calc(var(--r-sheet) - 12px); }
+    .login-form { width: 100%; max-width: 320px; }
+    .login-form h1,
+    .glass-circle.back .login-form h1 { font-size: var(--fs-title1); margin-bottom: 16px; }
+  }
+
+  /* 減少動態效果：不做 3D 翻轉，兩面直接交叉淡入淡出；拿掉掃光 */
+  @media (prefers-reduced-motion: reduce) {
+    .flip-card { transition: none; }
+    .flip-scene.flipped .flip-card,
+    .glass-circle.back { transform: none; }
+    .glass-circle,
+    .flip-scene.flipped .glass-circle.back,
+    .flip-scene:not(.flipped) .glass-circle.front { transition: opacity .2s ease; }
+    .login-form button[type="submit"]::before { display: none; }
+    .login-form button[type="submit"]:active { transform: none; }
+  }
+</style>
 </head>
 <body>
 
-<div class="container" style="max-width:420px;margin:0 auto;">
-  <div style="padding-top:calc(64px + env(safe-area-inset-top));text-align:center;">
-    <div class="brand" style="justify-content:center;"><img src="/static/plate-icon.png" alt="" class="brand-icon"><h1 style="font-size:22px;">登入</h1></div>
-    <div class="meta">台灣監理站車牌競標即時看板</div>
-  </div>
+<div class="flip-scene" id="flipScene">
+  <div class="flip-card">
 
-  <form method="post" class="panel" style="margin-top:20px;">
-    <div class="ios-row column">
-      <label for="username">帳號</label>
-      <input type="text" id="username" name="username" autocomplete="username" placeholder="帳號" required autofocus>
+    <!-- 正面：登入 -->
+    <div class="glass-circle front">
+      <form method="post" action="/login" class="login-form">
+        <div class="brandline"><img src="/static/plate-icon.png" alt="">台灣監理站車牌競標即時看板</div>
+        <h1>登入</h1>
+
+        <div class="input-box">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <input type="text" name="username" placeholder="帳號" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" required autofocus>
+        </div>
+
+        <div class="input-box has-toggle">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <input type="password" name="password" placeholder="密碼" autocomplete="current-password" enterkeyhint="go" required>
+          <button type="button" class="pw-toggle">顯示</button>
+        </div>
+
+        {% if error %}
+        <div class="status-msg err">{{ error }}</div>
+        {% endif %}
+
+        <button type="submit">登入</button>
+
+        <div class="signup-text">還沒有帳號？<button type="button" class="link-btn" id="toSignup">註冊新帳號</button></div>
+      </form>
     </div>
-    <div class="ios-row column">
-      <label for="password">密碼</label>
-      <div class="pw-field">
-        <input type="password" id="password" name="password" autocomplete="current-password" placeholder="密碼" required>
-        <button type="button" class="pw-toggle">顯示</button>
-      </div>
+
+    <!-- 背面：註冊（送出後照舊由 /register 導向「驗證信已寄出」畫面） -->
+    <div class="glass-circle back">
+      <form method="post" action="/register" class="login-form">
+        <div class="brandline"><img src="/static/plate-icon.png" alt="">台灣監理站車牌競標即時看板</div>
+        <h1>註冊</h1>
+
+        <div class="input-box">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+          <input type="text" name="username" placeholder="想使用的帳號" autocomplete="username" autocapitalize="none" autocorrect="off" spellcheck="false" enterkeyhint="next" required maxlength="50">
+        </div>
+
+        <div class="input-box">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>
+          <input type="email" name="email" placeholder="Email（收截止提醒）" autocomplete="email" enterkeyhint="next" required>
+        </div>
+
+        <div class="input-box has-toggle">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <input type="password" name="password" placeholder="密碼（至少 8 碼）" autocomplete="new-password" required minlength="8">
+          <button type="button" class="pw-toggle">顯示</button>
+        </div>
+
+        <div class="input-box has-toggle">
+          <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <input type="password" name="password2" placeholder="再輸入一次密碼" autocomplete="new-password" enterkeyhint="go" required minlength="8">
+          <button type="button" class="pw-toggle">顯示</button>
+        </div>
+
+        <button type="submit">送出並寄驗證信</button>
+
+        <div class="signup-text">已經有帳號？<button type="button" class="link-btn" id="toLogin">回登入</button></div>
+      </form>
     </div>
 
-    {% if error %}
-    <div class="status-msg err">{{ error }}</div>
-    {% endif %}
-
-    <button type="submit" class="ios-btn-block primary">登入</button>
-    <a href="/register" class="ios-btn-block" style="display:block;text-align:center;text-decoration:none;margin-top:8px;">註冊新帳號</a>
-  </form>
-
-  <div class="meta" style="text-align:center;margin-top:16px;line-height:1.6;">
-    看板與歷史查詢不需要帳號，<a href="/">直接看</a>就好。<br>
-    註冊是為了收藏追蹤號碼並接收截止提醒。
   </div>
 </div>
 
+<p class="foot-note">
+  看板與歷史查詢不需要帳號，<a href="/">直接看</a>就好。<br>
+  註冊是為了收藏追蹤號碼並接收截止提醒。
+</p>
+
+<script>
+  var scene = document.getElementById('flipScene');
+  document.getElementById('toSignup').addEventListener('click', function () { scene.classList.add('flipped'); });
+  document.getElementById('toLogin').addEventListener('click', function () { scene.classList.remove('flipped'); });
+</script>
 <script src="/static/password-toggle.js"></script>
 </body>
 </html>

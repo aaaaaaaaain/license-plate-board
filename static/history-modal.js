@@ -6,6 +6,25 @@ function extractPlateNumber(plate) {
   return m ? m[1] : plate;
 }
 
+// 錯誤提示：取代 alert()，從畫面底部浮出、4 秒後自己收掉，不用多按一次「確定」。
+// 看板和歷史頁都有載入這支，所以放在這裡給兩頁共用。
+let toastTimer = null;
+function showToast(text) {
+  let el = document.getElementById('toast');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'toast';
+    el.className = 'status-msg err toast';
+    el.setAttribute('role', 'alert');
+    document.body.appendChild(el);
+    void el.offsetWidth;  // 先讓瀏覽器算過隱藏的樣子，第一次出現才會淡入
+  }
+  el.textContent = text;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 4000);
+}
+
 // 目前彈窗顯示的是哪個號碼／監理站，截圖時要把這些資訊一起畫進圖片裡
 let currentHistoryContext = null;
 
@@ -79,7 +98,7 @@ function renderHistoryChart(history, decided) {
   const dots = history.map((h, i) => {
     const cx = x(i), cy = y(Number(h.price) || 0);
     const isDecidedPoint = decided && i === lastIdx;
-    const color = isDecidedPoint ? 'var(--green, #34C759)' : 'var(--accent)';
+    const color = isDecidedPoint ? 'var(--green-text)' : 'var(--accent)';
     const tip = isDecidedPoint
       ? `${h.recorded_at.replace('T', ' ')}\n${h.plate}\n✅ 已決標：${h.price} 元（第 ${h.bid_count} 次）`
       : `${h.recorded_at.replace('T', ' ')}\n${h.plate}\n${h.price} 元（第 ${h.bid_count} 次）`;
@@ -90,7 +109,7 @@ function renderHistoryChart(history, decided) {
   const last = history[n - 1];
   const lastX = x(n - 1), lastY = y(Number(last.price) || 0);
   const labelY = Math.max(lastY - 10, 10);
-  const labelColor = decided ? 'var(--green, #34C759)' : 'var(--accent)';
+  const labelColor = decided ? 'var(--green-text)' : 'var(--accent)';
   const labelText = decided ? `✅ ${last.price} 元` : `${last.price} 元`;
   const label = `<text x="${lastX}" y="${labelY}" font-size="11" font-weight="600" text-anchor="end" fill="${labelColor}">${labelText}</text>`;
 
@@ -269,7 +288,7 @@ async function downloadHistoryScreenshot() {
     const colorBg = isDark ? '#1c1c1e' : '#ffffff';
     const colorLabel = isDark ? '#ffffff' : '#1c1c1e';
     const colorSecondary = isDark ? '#8e8e93' : '#6d6d72';
-    const colorAccent = isDark ? '#0a84ff' : '#007aff';
+    const colorAccent = isDark ? '#409cff' : '#0062cc';  // 跟 style.css 的 --accent 一致
     const colorSeparator = isDark ? 'rgba(255,255,255,.15)' : 'rgba(0,0,0,.1)';
     const fontStack = '"PingFang TC", "Microsoft JhengHei", -apple-system, sans-serif';
 
@@ -318,7 +337,7 @@ async function downloadHistoryScreenshot() {
     );
   } catch (e) {
     console.error('產生截圖失敗', e);
-    alert('產生截圖失敗，請再試一次');
+    showToast('產生截圖失敗，請再試一次');
   } finally {
     btn.disabled = false;
     btn.textContent = originalText;
@@ -349,6 +368,9 @@ function ensureScreenshotPreviewOverlay() {
     </div>
   `;
   document.body.appendChild(overlay);
+  // 剛插進頁面的元素馬上加 .show 不會有轉場（瀏覽器還沒算過「關著」的樣子），
+  // 先讀一次版面讓它定下來，第一次打開才會跟之後一樣從底部滑上來
+  void overlay.offsetWidth;
   overlay.addEventListener('click', (e) => {
     if (e.target.id === 'screenshotPreviewOverlay') overlay.classList.remove('show');
   });

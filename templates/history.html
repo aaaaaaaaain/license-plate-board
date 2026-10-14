@@ -2,11 +2,11 @@
 <html lang="zh-Hant">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="theme-color" content="#F2F2F7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#000000" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#101012" media="(prefers-color-scheme: dark)">
 <title>出價歷史查詢 - 台灣監理站車牌競標即時看板</title>
 <link rel="icon" type="image/png" href="/static/plate-icon.png">
 <!-- iOS「加入主畫面」用的圖示：iOS 不吃 SVG favicon，一定要給 PNG，
@@ -43,7 +43,7 @@
     <select id="dateFilter">
       <option value="">全部日期</option>
     </select>
-    <input type="text" id="numberFilter" placeholder="輸入號碼篩選，例如：8888">
+    <input type="text" id="numberFilter" placeholder="輸入號碼篩選，例如：8888" autocapitalize="characters" autocorrect="off" spellcheck="false" enterkeyhint="search">
     <select id="patternFilter">
       <option value="">全部號碼型態</option>
     </select>
@@ -194,7 +194,7 @@ function renderDecidedRow(it) {
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
-        <div style="font-weight:600;color:var(--green, #34C759);">${it.final_price} 元</div>
+        <div style="font-weight:600;color:var(--green-text);">${it.final_price} 元</div>
         <div class="hint">✅ 已決標</div>
       </div>
     </div>
