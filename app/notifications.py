@@ -158,7 +158,7 @@ def send_watchlist_alerts(enriched):
     new_keys = {}    # username -> {"first": {key}, "final": {key}}
     for u in _flatten_plates(enriched):
         category = u["號牌類別"]
-        watchers = get_watchers(u["號牌"], category)
+        watchers = get_watchers(u["號牌"], category, u["section"], u["station"])
         if not watchers:
             continue
         for username in watchers:

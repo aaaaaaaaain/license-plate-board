@@ -30,6 +30,7 @@ DIM = (152, 152, 157)
 GRID = (58, 58, 60)
 ACCENT = (10, 132, 255)
 GREEN = (48, 209, 88)
+ORANGE = (255, 159, 10)   # 跟網頁深色模式的 --orange 一樣，標「重新開標」
 
 
 def _font(size, bold=False):
@@ -73,7 +74,8 @@ def render_history_png(plate, category, section, station, history, decided=None)
     f_label = _font(22, bold=True)
 
     d.text((36, 30), f"號碼 {plate}（{category}）", font=f_title, fill=FG)
-    d.text((36, 70), f"{section or ''} {station or ''}".strip(), font=f_sub, fill=DIM)
+    subtitle = f"{section or ''} {station or ''}".strip()
+    d.text((36, 70), subtitle, font=f_sub, fill=DIM)
 
     history = _latest_round(history)
     if not history:
@@ -81,6 +83,14 @@ def render_history_png(plate, category, section, station, history, decided=None)
         buf = io.BytesIO()
         img.save(buf, "PNG")
         return buf.getvalue()
+
+    # 同一面號牌流標後重新上架的那一輪，接在轄區／監理站後面標出來（網頁版標在圖的左上角）。
+    # 不用 emoji：微軟正黑體沒有 emoji 字形，Pillow 畫出來會是方框。
+    rnd = history[0].get("round") or 0
+    if rnd > 0:
+        # 全形括號自己就帶左右留白，間距只要一點點
+        x = 36 + (d.textlength(subtitle, font=f_sub) + 4 if subtitle else 0)
+        d.text((x, 70), f"（重新開標・第 {rnd + 1} 輪）", font=f_sub, fill=ORANGE)
 
     prices = [int(h.get("price") or 0) if str(h.get("price") or "").isdigit() else 0 for h in history]
     plot_w = WIDTH - PAD_LEFT - PAD_RIGHT

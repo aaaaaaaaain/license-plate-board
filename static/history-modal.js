@@ -109,6 +109,14 @@ function renderHistoryChart(history, decided) {
   const labelText = decided ? `✅ ${last.price} 元` : `${last.price} 元`;
   const label = `<text x="${lastX}" y="${labelY}" font-size="11" font-weight="600" text-anchor="end" fill="${labelColor}">${labelText}</text>`;
 
+  // 這一輪是同一面號牌流標後重新上架的（round 從 0 起算），左上角標出來——
+  // 圖只畫這一輪、從底價重新喊起，不標的話看起來像這面號牌一直都只喊到這裡。
+  // 左上角跟右邊的最新價格標籤錯開，不會疊在一起。
+  const round = history[0].round || 0;
+  const relistLabel = round > 0
+    ? `<text x="${padding.left}" y="12" font-size="10" font-weight="600" fill="var(--orange)">（重新開標・第 ${round + 1} 輪）</text>`
+    : '';
+
   // 橫軸刻度：標頭、尾，中間再補一個離頭尾都夠遠的，靠太近就不標——
   // 「第 N 次」的文字疊在一起比少標一個更難看懂。
   const ticks = [];
@@ -145,6 +153,7 @@ function renderHistoryChart(history, decided) {
       <polyline points="${points}" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
       ${dots}
       ${label}
+      ${relistLabel}
       ${xLabels}
     </svg>
   `;

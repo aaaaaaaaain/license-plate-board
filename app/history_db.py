@@ -21,6 +21,20 @@ def extract_plate_number(plate):
     return m.group(1) if m else plate
 
 
+def parse_deadline(text):
+    """把「1150713 11:00:00」（民國年月日+時間）轉成 datetime，失敗回傳 None。"""
+    try:
+        date_part, time_part = text.split()
+        roc_year = int(date_part[:3])
+        month = int(date_part[3:5])
+        day = int(date_part[5:7])
+        year = roc_year + 1911
+        hour, minute, second = (int(x) for x in time_part.split(":"))
+        return datetime(year, month, day, hour, minute, second)
+    except (ValueError, IndexError):
+        return None
+
+
 # 決標紀錄的表結構。搬遷函式和 init 兩邊都要建，寫成一份才不會漂掉。
 # plate 允許 NULL：舊資料回推不出字首的那幾列只能留空。
 _DECIDED_DDL = """
@@ -98,6 +112,52 @@ def _migrate_decided_add_plate(conn):
     )
 
 
+_WATCHLIST_DDL = """
+    CREATE TABLE IF NOT EXISTS {name} (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT NOT NULL,
+        plate TEXT NOT NULL,
+        number_key TEXT NOT NULL,
+        category TEXT NOT NULL,
+        section TEXT NOT NULL,
+        station TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        UNIQUE(username, plate, category, section, station)
+    )
+"""
+
+
+def _migrate_watchlist_add_station(conn):
+    """追蹤清單補上轄區＋監理站。舊表只存「完整號牌＋車種」，從出價歷史找那面號牌
+    最後出現的站補上——追蹤只能從看板上點，被追蹤的號牌一定有出價紀錄。
+    找不到的（理論上不會有）就不搬，記在 log，不猜一個站掛上去。
+    搬遷時實測同號牌同車種出現在兩個站的組數是 0，所以「最後出現的站」不會選錯。
+    """
+    conn.execute("DROP TABLE IF EXISTS watchlist_v3")
+    conn.execute(_WATCHLIST_DDL.format(name="watchlist_v3"))
+    rows = conn.execute("SELECT username, plate, number_key, category, created_at FROM watchlist").fetchall()
+    moved = 0
+    for username, plate, number_key, category, created_at in rows:
+        where = conn.execute(
+            "SELECT section, station FROM bid_history WHERE plate=? AND category=? "
+            "ORDER BY recorded_at DESC, id DESC LIMIT 1",
+            (plate, category),
+        ).fetchone()
+        if not where:
+            logger.warning(f"[migrate] 追蹤清單 {username} 的 {plate}（{category}）找不到所在監理站，不搬")
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO watchlist_v3 "
+            "(username, plate, number_key, category, section, station, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (username, plate, number_key, category, where[0], where[1], created_at),
+        )
+        moved += 1
+    conn.execute("DROP TABLE watchlist")
+    conn.execute("ALTER TABLE watchlist_v3 RENAME TO watchlist")
+    logger.info(f"[migrate] 追蹤清單補上轄區＋監理站：{len(rows)} 列，搬過去 {moved} 列")
+
+
 def init_history_db():
     conn = sqlite3.connect(HISTORY_DB_PATH)
     conn.execute("""
@@ -131,26 +191,19 @@ def init_history_db():
     conn.execute("CREATE INDEX IF NOT EXISTS idx_decided_identity "
                  "ON decided_results(plate, category, section, station)")
 
-    # 每個使用者自己收藏想追蹤的號碼，以「完整號牌＋車種」為單位：PJY-8888 和 BSA-8888
-    # 是兩面不同的號牌，追蹤了哪一面就只提醒那一面。number_key 只是順便存著給查歷史用，
-    # 不參與比對。舊版是用「數字＋車種」，同數字不同字首會被當成同一個目標，
-    # 舊表沒有 plate 欄位就整張丟掉重建（跟上面 decided_results 同樣做法）。
+    # 每個使用者自己收藏想追蹤的號牌，身分跟出價歷史一樣是「轄區＋監理站＋車種＋完整號牌」：
+    # 追蹤了哪一面就只提醒那一面。number_key 只是順便存著，不參與比對。
+    # 搬遷分兩代：最舊的表只有數字（沒有 plate）→ 整張丟掉重建；V2.7 以前有 plate
+    # 但沒有轄區／監理站 → 從出價歷史補上那面號牌所在的站（見 _migrate_watchlist_add_station）。
     old_watch_cols = [r[1] for r in conn.execute("PRAGMA table_info(watchlist)").fetchall()]
     if old_watch_cols and "plate" not in old_watch_cols:
         conn.execute("DROP TABLE watchlist")
-    conn.execute("""
-        CREATE TABLE IF NOT EXISTS watchlist (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT NOT NULL,
-            plate TEXT NOT NULL,
-            number_key TEXT NOT NULL,
-            category TEXT NOT NULL,
-            created_at TEXT NOT NULL,
-            UNIQUE(username, plate, category)
-        )
-    """)
+    elif old_watch_cols and "station" not in old_watch_cols:
+        _migrate_watchlist_add_station(conn)
+    conn.execute(_WATCHLIST_DDL.format(name="watchlist"))
     conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_user ON watchlist(username)")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_target ON watchlist(plate, category)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_watchlist_identity "
+                 "ON watchlist(plate, category, section, station)")
     conn.commit()
     conn.close()
 
@@ -163,39 +216,43 @@ def get_watchlist(username):
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         rows = conn.execute(
-            "SELECT plate, number_key, category, created_at FROM watchlist "
+            "SELECT plate, number_key, category, section, station, created_at FROM watchlist "
             "WHERE username=? ORDER BY created_at DESC",
             (username,),
         ).fetchall()
     finally:
         conn.close()
     return [
-        {"plate": r[0], "number_key": r[1], "category": r[2], "created_at": r[3]}
+        {"plate": r[0], "number_key": r[1], "category": r[2], "section": r[3],
+         "station": r[4], "created_at": r[5]}
         for r in rows
     ]
 
 
-def add_watchlist(username, plate, category):
-    """加入追蹤。plate 是完整號牌（例如 PJY-8888）。回傳 (成功與否, 錯誤訊息)。"""
+def add_watchlist(username, plate, category, section, station):
+    """加入追蹤。身分是完整號牌（例如 PJY-8888）＋車種＋轄區＋監理站。回傳 (成功與否, 錯誤訊息)。"""
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         (count,) = conn.execute(
             "SELECT COUNT(*) FROM watchlist WHERE username=?", (username,)
         ).fetchone()
         already = conn.execute(
-            "SELECT 1 FROM watchlist WHERE username=? AND plate=? AND category=?",
-            (username, plate, category),
+            "SELECT 1 FROM watchlist WHERE username=? AND plate=? AND category=? AND section=? AND station=?",
+            (username, plate, category, section, station),
         ).fetchone()
         if not already and count >= MAX_WATCHLIST_PER_USER:
             return False, f"追蹤清單最多只能放 {MAX_WATCHLIST_PER_USER} 個號碼"
         conn.execute(
-            "INSERT OR IGNORE INTO watchlist (username, plate, number_key, category, created_at) "
-            "VALUES (?, ?, ?, ?, ?)",
+            "INSERT OR IGNORE INTO watchlist "
+            "(username, plate, number_key, category, section, station, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (
                 username,
                 plate,
                 extract_plate_number(plate),
                 category,
+                section,
+                station,
                 datetime.now().isoformat(timespec="seconds"),
             ),
         )
@@ -205,12 +262,12 @@ def add_watchlist(username, plate, category):
     return True, None
 
 
-def remove_watchlist(username, plate, category):
+def remove_watchlist(username, plate, category, section, station):
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         conn.execute(
-            "DELETE FROM watchlist WHERE username=? AND plate=? AND category=?",
-            (username, plate, category),
+            "DELETE FROM watchlist WHERE username=? AND plate=? AND category=? AND section=? AND station=?",
+            (username, plate, category, section, station),
         )
         conn.commit()
     finally:
@@ -226,14 +283,14 @@ def delete_user_watchlist(username):
         conn.close()
 
 
-def get_watchers(plate, category):
-    """誰在追蹤這面號牌——寄個人化截止提醒時用。比對完整號牌，
-    所以追蹤 PJY-8888 的人不會收到 BSA-8888 的提醒。"""
+def get_watchers(plate, category, section, station):
+    """誰在追蹤這面號牌——寄個人化截止提醒時用。比對轄區＋監理站＋車種＋完整號牌，
+    所以追蹤 PJY-8888 的人不會收到 BSA-8888 的提醒，也不會收到別站同號牌的提醒。"""
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         rows = conn.execute(
-            "SELECT username FROM watchlist WHERE plate=? AND category=?",
-            (plate, category),
+            "SELECT username FROM watchlist WHERE plate=? AND category=? AND section=? AND station=?",
+            (plate, category, section, station),
         ).fetchall()
     finally:
         conn.close()
@@ -339,14 +396,14 @@ def detect_decided(enriched, recorded_at, failed_stations=None):
                 plate, category, section, station_name = key
                 number_key = extract_plate_number(plate)
                 last = conn.execute(
-                    "SELECT price, recorded_at FROM bid_history "
+                    "SELECT price, recorded_at, deadline FROM bid_history "
                     "WHERE plate=? AND category=? AND section=? AND station=? "
                     "ORDER BY id DESC LIMIT 1",
                     key,
                 ).fetchone()
                 if last is None:
                     continue
-                price, last_seen = last
+                price, last_seen, deadline = last
                 # 決標時間記「最後一次看到這面號牌」的時間，不是我們發現它不見的時間。
                 # 兩者都在一個掃描間隔內，但最後一次看到的時間不受重啟、也不受
                 # 整批消失要按住幾輪影響——按住三輪才確認的話，用發現時間會晚快 20 分鐘。
@@ -357,6 +414,24 @@ def detect_decided(enriched, recorded_at, failed_stations=None):
                     (plate, number_key, category, section, station_name, price,
                      last_seen or recorded_at),
                 )
+                # 結標了就從所有人的追蹤清單拿掉：看板只列競標中的號牌，留著的話
+                # ★ 不會再出現、使用者也取消不了，只會默默佔掉 200 個名額。
+                # 同一面號牌之後流標重新上架，要重新追蹤（使用者選的取捨）。
+                # 但只在決標時間已經過了才拿：還沒到截止就從清單消失的，是掃描時短暫
+                # 不見（RGC-1725 在 10-20 被判決標、10-22 才截止，現在還在競標），
+                # 拿掉的話使用者的追蹤就這樣不見了。
+                deadline_dt = parse_deadline(deadline or "")
+                if deadline_dt and deadline_dt > datetime.fromisoformat(recorded_at):
+                    logger.warning(f"[decided] {plate}（{section} {station_name}）還沒到決標時間 "
+                                   f"{deadline} 就不見了，不從追蹤清單移除")
+                    continue
+                removed = conn.execute(
+                    "DELETE FROM watchlist WHERE plate=? AND category=? AND section=? AND station=?",
+                    key,
+                ).rowcount
+                if removed:
+                    logger.info(f"[decided] {plate}（{section} {station_name}）已決標，"
+                                f"從 {removed} 份追蹤清單移除")
             conn.commit()
         finally:
             conn.close()
@@ -385,7 +460,7 @@ def get_decided_results():
 
 
 def record_bid_changes(enriched, recorded_at):
-    """出價或出價次數跟上一筆紀錄不同才寫入一筆新的，沒變就跳過
+    """出價、出價次數或決標時間跟上一筆紀錄不同才寫入一筆新的，沒變就跳過
     （趨勢圖看的是真實的出價變化，不是固定「一天一筆」——不然同一天內
     價格真的動了好幾次會被壓成一筆，看不出走勢；沒動的話也不用重複記）。
 
@@ -400,12 +475,16 @@ def record_bid_changes(enriched, recorded_at):
     """
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
+        # 決標時間也要比：沒人出價（停在第 1 次、底價）的號牌流標後重新上架，價格和
+        # 次數都跟上一輪最後一筆一樣，只有決標時間換成新的日期。不比的話新一輪一列都
+        # 不會寫，_tag_rounds 分不出換輪、看板也標不出「重新開標」。防搶標延長一定伴隨
+        # 出價，本來就會寫，所以這裡不會多寫延長造成的列。
         last_values = {
-            (plate, category, section, station_name): (price, bid_count)
-            for plate, category, section, station_name, price, bid_count in conn.execute("""
-                SELECT plate, category, section, station, price, bid_count
+            (plate, category, section, station_name): (price, bid_count, deadline or "")
+            for plate, category, section, station_name, price, bid_count, deadline in conn.execute("""
+                SELECT plate, category, section, station, price, bid_count, deadline
                 FROM (
-                    SELECT plate, category, section, station, price, bid_count,
+                    SELECT plate, category, section, station, price, bid_count, deadline,
                         ROW_NUMBER() OVER (
                             PARTITION BY plate, category, section, station
                             ORDER BY recorded_at DESC
@@ -423,8 +502,9 @@ def record_bid_changes(enriched, recorded_at):
                 station_name = station["station"]
                 price = str(p["目前出價"])
                 bid_count = str(p["出價次數"])
+                deadline = p["決標時間"] or ""
                 key = (plate, category, section, station_name)
-                if last_values.get(key) == (price, bid_count):
+                if last_values.get(key) == (price, bid_count, deadline):
                     continue
                 number_key = extract_plate_number(plate)
                 conn.execute(
@@ -432,9 +512,9 @@ def record_bid_changes(enriched, recorded_at):
                     "(plate, number_key, section, station, category, price, bid_count, deadline, recorded_at) "
                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (plate, number_key, section, station_name, category,
-                     price, bid_count, p["決標時間"], recorded_at),
+                     price, bid_count, deadline, recorded_at),
                 )
-                last_values[key] = (price, bid_count)
+                last_values[key] = (price, bid_count, deadline)
         conn.commit()
     finally:
         conn.close()
@@ -490,14 +570,17 @@ def get_history_summary():
     ]
 
 
-def _tag_rounds(history, decided_times):
-    """幫每一筆紀錄標上 round（第幾輪，從 0 起算），網頁和 Discord 的趨勢圖都只畫最大的那輪。
+def _tag_rounds(history):
+    """幫每一筆紀錄標上 round（第幾輪，從 0 起算），網頁和 Discord 的趨勢圖都只畫最大的那輪，
+    看板的「重新開標」也是看這個（round > 0）。
 
     同一面號牌（同一個身分）也會流標後重新上架，出價次數從頭數起、價格回到底價，
     跟上一輪畫在同一張圖上看起來像崩盤。換輪的判斷：
       - 出價次數比上一筆少（重新數起）；或
-      - 上一筆和這一筆之間夾著一次決標（上一輪最後一次只喊到第 1 次、新一輪也是
-        第 1 次時，次數沒有變少，只能靠決標時間分）。
+      - 決標時間換了一天。防搶標延長只會往後推幾分鐘、不會跨日，換日期就是新的一場。
+        上一輪沒人出價（停在第 1 次）又重新上架時次數不會變少，只能靠這條分。
+    不拿「兩筆之間夾著一次決標」當依據：2026-10-21 實測那樣切出的 39 個斷點，決標時間
+    全都沒換日期——是號牌掃描時短暫消失被誤判成決標（例如 RGC-1725），不是重新開標。
     在這裡算一次、隨資料送出去，兩份畫圖程式就不用各自維護一份換輪規則。
     """
     rnd = 0
@@ -508,8 +591,10 @@ def _tag_rounds(history, decided_times):
                 restarted = int(h["bid_count"] or 0) < int(prev["bid_count"] or 0)
             except (TypeError, ValueError):
                 restarted = False
-            decided_between = any(prev["recorded_at"] <= t < h["recorded_at"] for t in decided_times)
-            if restarted or decided_between:
+            # 決標時間是「1151022 11:00:00」，前 7 碼是民國年月日；舊資料有幾列是空的就不比
+            new_day = bool(h["deadline"] and prev["deadline"]
+                           and h["deadline"][:7] != prev["deadline"][:7])
+            if restarted or new_day:
                 rnd += 1
         h["round"] = rnd
         prev = h
@@ -526,7 +611,7 @@ def _load_histories(where_sql, params):
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         rows = conn.execute(
-            f"SELECT plate, price, bid_count, recorded_at, category, section, station "
+            f"SELECT plate, price, bid_count, recorded_at, category, section, station, deadline "
             f"FROM bid_history WHERE {where_sql} ORDER BY recorded_at ASC, id ASC",
             params,
         ).fetchall()
@@ -542,7 +627,7 @@ def _load_histories(where_sql, params):
     for r in rows:
         histories.setdefault((r[0], r[4], r[5], r[6]), []).append({
             "plate": r[0], "price": r[1], "bid_count": r[2], "recorded_at": r[3],
-            "category": r[4], "section": r[5], "station": r[6],
+            "category": r[4], "section": r[5], "station": r[6], "deadline": r[7] or "",
         })
     decided_by = {}
     for plate, category, section, station, final_price, decided_at in decided_rows:
@@ -552,13 +637,31 @@ def _load_histories(where_sql, params):
     result = {}
     for identity, history in sorted(histories.items(), key=lambda kv: kv[1][-1]["recorded_at"]):
         decided_list = decided_by.get(identity, [])
-        _tag_rounds(history, [d["decided_at"] for d in decided_list])
+        _tag_rounds(history)
         decided = None
         # 同一面號牌決標之後又有更新的出價紀錄＝流標後重新上架、還在競標，不算已決標
         if decided_list and not any(h["recorded_at"] > decided_list[-1]["decided_at"] for h in history):
             decided = decided_list[-1]
         result[identity] = (history, decided)
     return result
+
+
+def get_relisted_identities(identities):
+    """這幾面號牌裡，哪些是「重新開標」：同一面號牌流標後重新上架、現在是第 2 輪以上。
+
+    換輪規則跟趨勢圖同一份（_tag_rounds），看板上標「重新開標」的號牌，點開趨勢圖
+    一定也是重新開始的那一輪。identities 是 (完整號牌, 車種, 轄區, 監理站) 的集合，
+    回傳其中最新一筆 round > 0 的那些。分批查，避免一次塞太多參數給 SQLite。
+    """
+    identities = list(identities)
+    relisted = set()
+    for i in range(0, len(identities), 200):
+        chunk = identities[i:i + 200]
+        where = ("(plate, category, section, station) IN (VALUES "
+                 + ", ".join(["(?, ?, ?, ?)"] * len(chunk)) + ")")
+        found = _load_histories(where, [v for ident in chunk for v in ident])
+        relisted |= {ident for ident, (history, _) in found.items() if history and history[-1]["round"] > 0}
+    return relisted
 
 
 def get_plate_history(plate, category, section, station):

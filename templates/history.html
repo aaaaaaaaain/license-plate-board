@@ -101,6 +101,8 @@ let decidedItems = [];
 // （同一輪整批消失就不判），就會一直留在這份清單裡——價格停在底價、last_seen
 // 停在前一天，畫面上卻跟還在競標的長得一模一樣。
 let liveKeys = null;
+// 目前在看板上、而且是「重新開標」（同一面號牌流標後重新上架）的號牌
+let relistedKeys = new Set();
 
 // 自動更新的間隔跟背景掃描一樣（{{ scan_interval_minutes }} 分鐘）——掃描沒跑完
 // 之前重拉也拿不到新東西。
@@ -145,15 +147,16 @@ function decidedFor(it) {
   return d;
 }
 
-function liveKeyOf(plate, category, station) {
-  return `${plate}|${category}|${station}`;
+// 跟 identityKey 一樣是轄區＋監理站＋車種＋完整號牌，少一個欄位就可能認錯面
+function liveKeyOf(plate, category, section, station) {
+  return `${plate}|${category}|${section}|${station}`;
 }
 
 function buildLiveKeys(data) {
   const keys = new Set();
   for (const st of (data && data.results) || []) {
     for (const p of st.plates || []) {
-      keys.add(liveKeyOf(p['號牌'], p['號牌類別'], st.station));
+      keys.add(liveKeyOf(p['號牌'], p['號牌類別'], st.section, st.station));
     }
   }
   // 整批 0 筆是來源網站維護時段（不是全部結標），回 null ＝這次不拿它來篩；
@@ -161,12 +164,22 @@ function buildLiveKeys(data) {
   return keys.size ? keys : null;
 }
 
+function buildRelistedKeys(data) {
+  const keys = new Set();
+  for (const st of (data && data.results) || []) {
+    for (const p of st.plates || []) {
+      if (p.relisted) keys.add(liveKeyOf(p['號牌'], p['號牌類別'], st.section, st.station));
+    }
+  }
+  return keys;
+}
+
 // last_seen 不能拿來判斷「是不是還在競標」：record_bid_changes 只在出價或次數
 // 變動時才寫一列，所以一面沒人加價的號牌 last_seen 會停在好幾天前，實際上還在
 // 競標（PKX-6789 就是這樣：只有 08-19 一筆紀錄，08-21 仍在競標清單上）。
 function isLive(it) {
   if (!liveKeys) return true;
-  return liveKeys.has(liveKeyOf(it.plate, it.category, it.station));
+  return liveKeys.has(liveKeyOf(it.plate, it.category, it.section, it.station));
 }
 
 function renderActiveRow(it) {
@@ -174,7 +187,7 @@ function renderActiveRow(it) {
   return `
     <div class="ios-row number-row" data-plate="${it.plate}" data-category="${it.category}" data-section="${it.section}" data-station="${it.station}">
       <div>
-        <div style="font-weight:600;">號碼 ${it.plate}　<span class="hint" style="display:inline;">${it.category}</span></div>
+        <div style="font-weight:600;">號碼 ${it.plate}${relistedKeys.has(liveKeyOf(it.plate, it.category, it.section, it.station)) ? '<span class="relist-badge">（重新開標）</span>' : ''}　<span class="hint" style="display:inline;">${it.category}</span></div>
         <div class="hint" style="margin:2px 0 0;">
           ${it.section} ${it.station} · ${it.points} 筆紀錄 · ${when}
         </div>
@@ -585,6 +598,7 @@ async function loadList(silent) {
       liveData = null;
     }
     liveKeys = buildLiveKeys(liveData);
+    relistedKeys = buildRelistedKeys(liveData);
     document.getElementById('lastUpdated').textContent = (liveData && liveData.last_updated) || '尚未更新';
     lastLoadedAt = Date.now();
     buildDecidedMap();

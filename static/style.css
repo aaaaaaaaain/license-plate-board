@@ -529,6 +529,15 @@ td.remain {
 }
 .watch-btn.on { color: var(--orange); }
 
+/* 重新開標：同一面號牌流標後重新上架（後端 _tag_rounds 的 round > 0）。
+   看板、歷史頁的號牌後面接「（重新開標）」，跟號牌同一行、同字級；
+   用 ★ 那個橘色，深色模式自動換成亮橘 */
+.relist-badge {
+  color: var(--orange);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
 .watch-filter {
   display: inline-flex;
   align-items: center;

@@ -150,10 +150,13 @@ async function loadMyAlertThreshold() {
   }
 }
 
-// 追蹤清單以「完整號牌＋車種」為單位，跟後端 watchlist.plate 一致：
+// 追蹤清單以「轄區＋監理站＋車種＋完整號牌」為單位，跟後端 watchlist 一致：
 // PJY-8888 和 BSA-8888 是兩面不同的號牌，追蹤了哪一面就只有那一面會亮星號、
 // 只有那一面會寄提醒。同一個數字換字首重新上架時要重新追蹤。
-let watchSet = new Set();  // "plate|category"
+let watchSet = new Set();  // watchKeyOf(...)
+function watchKeyOf(plate, category, section, station) {
+  return `${plate}|${category}|${section}|${station}`;
+}
 
 async function loadWatchlist() {
   if (!LOGGED_IN) return;
@@ -161,14 +164,14 @@ async function loadWatchlist() {
     const resp = await fetch('/api/watchlist');
     if (!resp.ok) return;
     const data = await resp.json();
-    watchSet = new Set((data.items || []).map(i => `${i.plate}|${i.category}`));
+    watchSet = new Set((data.items || []).map(i => watchKeyOf(i.plate, i.category, i.section, i.station)));
   } catch (e) {
     console.error('讀取追蹤清單失敗', e);
   }
 }
 
-async function toggleWatch(plate, category) {
-  const key = `${plate}|${category}`;
+async function toggleWatch(plate, category, section, station) {
+  const key = watchKeyOf(plate, category, section, station);
   const watching = watchSet.has(key);
   // 先更新畫面讓點擊有立即反應，失敗再還原
   if (watching) watchSet.delete(key); else watchSet.add(key);
@@ -177,7 +180,7 @@ async function toggleWatch(plate, category) {
     const resp = await fetch('/api/watchlist', {
       method: watching ? 'DELETE' : 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ plate, category }),
+      body: JSON.stringify({ plate, category, section, station }),
     });
     const data = await resp.json();
     if (!resp.ok || !data.ok) {
@@ -324,7 +327,7 @@ function render() {
       if (!selected.includes(p['號牌類別'])) continue;
       if (numberFilter && !p['號牌'].includes(numberFilter)) continue;
       if (!matchesPlatePattern(p['號牌'], patternFilter)) continue;
-      if (onlyWatched && !watchSet.has(`${p['號牌']}|${p['號牌類別']}`)) continue;
+      if (onlyWatched && !watchSet.has(watchKeyOf(p['號牌'], p['號牌類別'], station.section, station.station))) continue;
       if (isUrgent(p)) {
         urgentItems.push(`${station.section} ${station.station} ${p['號牌']}（剩 ${formatRemain(p.seconds_left)}）`);
       }
@@ -346,15 +349,15 @@ function render() {
   for (const { station, p } of pageItems) {
     const tr = document.createElement('tr');
     if (isUrgent(p)) tr.className = 'urgent';
-    const watching = watchSet.has(`${p['號牌']}|${p['號牌類別']}`);
+    const watching = watchSet.has(watchKeyOf(p['號牌'], p['號牌類別'], station.section, station.station));
     const watchCell = LOGGED_IN
-      ? `<td><button type="button" class="watch-btn${watching ? ' on' : ''}" data-plate="${p['號牌']}" data-category="${p['號牌類別']}" aria-label="${watching ? '取消追蹤' : '加入追蹤'}">${watching ? '★' : '☆'}</button></td>`
+      ? `<td><button type="button" class="watch-btn${watching ? ' on' : ''}" data-plate="${p['號牌']}" data-category="${p['號牌類別']}" data-section="${station.section}" data-station="${station.station}" aria-label="${watching ? '取消追蹤' : '加入追蹤'}">${watching ? '★' : '☆'}</button></td>`
       : '';
     tr.innerHTML = `
       ${watchCell}
       <td>${station.section}</td>
       <td>${station.station}</td>
-      <td>${p['號牌']}</td>
+      <td>${p['號牌']}${p.relisted ? '<span class="relist-badge">（重新開標）</span>' : ''}</td>
       <td>${p['號牌類別']}</td>
       <td>${p['底價']}</td>
       <td>${p['目前出價']}</td>
@@ -498,7 +501,7 @@ document.getElementById('sortSelect').addEventListener('change', () => {
 document.getElementById('tableBody').addEventListener('click', (e) => {
   const watchBtn = e.target.closest('.watch-btn');
   if (watchBtn) {
-    toggleWatch(watchBtn.dataset.plate, watchBtn.dataset.category);
+    toggleWatch(watchBtn.dataset.plate, watchBtn.dataset.category, watchBtn.dataset.section, watchBtn.dataset.station);
     return;
   }
   const btn = e.target.closest('.hist-btn');

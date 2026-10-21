@@ -184,7 +184,8 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
             return
         filename = f"trend_{p['號牌'].replace('-', '')}.png"
         await interaction.followup.send(
-            f"📈 {st['station']} {p['號牌']}（{p['號牌類別']}）目前 {p['目前出價']} 元・第 {p['出價次數']} 次出價",
+            f"📈 {st['station']} {p['號牌']}（{p['號牌類別']}）"
+            f"{'（重新開標）' if p.get('relisted') else ''}目前 {p['目前出價']} 元・第 {p['出價次數']} 次出價",
             file=discord.File(io.BytesIO(png), filename=filename),
         )
 
@@ -290,8 +291,9 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
         lines = []
         for st, p in matches:
             mark = "⚠️ " if p.get("is_urgent") else ""
+            relist = "（重新開標）" if p.get("relisted") else ""
             lines.append(
-                f"{mark}{st['section']} {st['station']} {p['號牌']}"
+                f"{mark}{st['section']} {st['station']} {p['號牌']}{relist}"
                 f"（{p['號牌類別']}）目前 {p['目前出價']} 元，剩餘 {format_remain(p.get('seconds_left'))}"
             )
 

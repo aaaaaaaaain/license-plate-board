@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from plate_bid_scanner import get_all_sections_and_stations, scan
 
 from .config_store import CONFIG
-from .history_db import detect_decided, record_bid_changes
+from .history_db import detect_decided, get_relisted_identities, parse_deadline, record_bid_changes
 from .logging_setup import logger
 from .notifications import send_broadcast_alerts, send_watchlist_alerts
 from .paths import LATEST_PATH
@@ -63,20 +63,6 @@ def refresh_stations_cache():
         logger.info(f"[stations] 已取得監理站目錄：{len(STATIONS_CACHE)} 個轄區、共 {total} 個監理站")
     except Exception as e:
         logger.error(f"[stations] 取得監理站目錄失敗：{e}")
-
-
-def parse_deadline(text):
-    """把「1150713 11:00:00」（民國年月日+時間）轉成 datetime，失敗回傳 None。"""
-    try:
-        date_part, time_part = text.split()
-        roc_year = int(date_part[:3])
-        month = int(date_part[3:5])
-        day = int(date_part[5:7])
-        year = roc_year + 1911
-        hour, minute, second = (int(x) for x in time_part.split(":"))
-        return datetime(year, month, day, hour, minute, second)
-    except (ValueError, IndexError):
-        return None
 
 
 def build_enriched_results(raw_results, alert_before_minutes):
@@ -143,6 +129,17 @@ def run_scan_once():
 
         record_bid_changes(enriched, STATE["last_updated"])
         detect_decided(enriched, STATE["last_updated"], failed_stations)
+
+        # 同一面號牌流標後重新上架的，看板、歷史頁、Discord 都標「重新開標」。
+        # 要在 record_bid_changes 之後算：新一輪的第一筆寫進去才分得出換輪了。
+        relisted = get_relisted_identities({
+            (p["號牌"], p["號牌類別"], st["section"], st["station"])
+            for st in enriched for p in st["plates"]
+        })
+        with STATE_LOCK:
+            for st in enriched:
+                for p in st["plates"]:
+                    p["relisted"] = (p["號牌"], p["號牌類別"], st["section"], st["station"]) in relisted
 
         LATEST_PATH.write_text(
             json.dumps({"results": enriched, "last_updated": STATE["last_updated"]},
