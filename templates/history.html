@@ -121,19 +121,25 @@ function currentDataset() {
 // 它們在「已決標紀錄」那個模式裡看得到。
 let decidedMap = new Map();
 
+// 身分是轄區＋監理站＋車種＋完整號牌：只用數字配對的話，PKC-8888 決標了，
+// 同站另一面還在競標的 PLY-8888 也會被當成已決標排掉。
+function identityKey(it) {
+  return `${it.plate}|${it.category}|${it.section}|${it.station}`;
+}
+
 function buildDecidedMap() {
   decidedMap = new Map();
   for (const d of decidedItems) {
-    const k = `${d.number_key}|${d.category}|${d.section}|${d.station}`;
+    const k = identityKey(d);
     const prev = decidedMap.get(k);
     if (!prev || (d.decided_at || '') > (prev.decided_at || '')) decidedMap.set(k, d);
   }
 }
 
 function decidedFor(it) {
-  const d = decidedMap.get(`${it.number_key}|${it.category}|${it.section}|${it.station}`);
+  const d = decidedMap.get(identityKey(it));
   if (!d) return null;
-  // 決標後又重新上架、已經有更新的出價紀錄的話就不算已決標
+  // 同一面號牌決標後又重新上架、已經有更新的出價紀錄的話就不算已決標
   // （跟後端 get_plate_history 判斷「有沒有更新的活動」是同一條規則）
   if (it.last_seen && d.decided_at && it.last_seen > d.decided_at) return null;
   return d;
@@ -168,9 +174,9 @@ function renderActiveRow(it) {
   return `
     <div class="ios-row number-row" data-plate="${it.plate}" data-category="${it.category}" data-section="${it.section}" data-station="${it.station}">
       <div>
-        <div style="font-weight:600;">號碼 ${it.number_key}　<span class="hint" style="display:inline;">${it.category}</span></div>
+        <div style="font-weight:600;">號碼 ${it.plate}　<span class="hint" style="display:inline;">${it.category}</span></div>
         <div class="hint" style="margin:2px 0 0;">
-          ${it.plate} · ${it.section} ${it.station} · ${it.points} 筆紀錄 · ${when}
+          ${it.section} ${it.station} · ${it.points} 筆紀錄 · ${when}
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
@@ -182,15 +188,12 @@ function renderActiveRow(it) {
 }
 
 function renderDecidedRow(it) {
-  // 字首跟競標中那排一樣放在第二行。舊紀錄回推不出字首的會是空的，就不顯示這一段
-  // （同站同數字同時有兩面號牌時，靠它才分得出兩列是兩面號牌、不是重複紀錄）。
-  const plate = it.plate ? `${it.plate} · ` : '';
   return `
-    <div class="ios-row number-row" data-plate="${it.plate || it.number_key}" data-category="${it.category}" data-section="${it.section}" data-station="${it.station}">
+    <div class="ios-row number-row" data-plate="${it.plate}" data-category="${it.category}" data-section="${it.section}" data-station="${it.station}">
       <div>
-        <div style="font-weight:600;">號碼 ${it.number_key}　<span class="hint" style="display:inline;">${it.category}</span></div>
+        <div style="font-weight:600;">號碼 ${it.plate}　<span class="hint" style="display:inline;">${it.category}</span></div>
         <div class="hint" style="margin:2px 0 0;">
-          ${plate}${it.section} ${it.station} · 決標時間 ${it.decided_at ? it.decided_at.replace('T', ' ') : '-'}
+          ${it.section} ${it.station} · 決標時間 ${it.decided_at ? it.decided_at.replace('T', ' ') : '-'}
         </div>
       </div>
       <div style="text-align:right;flex-shrink:0;">
@@ -225,18 +228,16 @@ function renderPagination(total, totalPages) {
   });
 }
 
-// 號碼篩選：決標紀錄只有數字（不含字首字母），競標中的還有完整號牌，
-// 所以兩個欄位都比對——打「8888」兩種模式都找得到，打「PJY」也還能在
-// 競標中的清單裡找到那一面。
+// 號碼篩選：數字和完整號牌兩個欄位都比對——打「8888」找得到每一面 8888，
+// 打「PJY」或「PJY-8888」也找得到那一面。
 function matchesNumber(it, keyword) {
   if (!keyword) return true;
   return (it.number_key || '').includes(keyword) || (it.plate || '').includes(keyword);
 }
 
-// 號碼型態（鐵支／豹子／順子…）：決標紀錄沒有完整號牌，兩種模式都用 number_key
-// 這串數字去比，型態本來就只看數字，字首字母不影響結果。
+// 號碼型態（鐵支／豹子／順子…）只看 number_key 這串數字，字首字母不影響結果。
 function matchesPattern(it, value) {
-  return matchesPlatePattern(it.number_key || it.plate || '', value);
+  return matchesPlatePattern(it.number_key || '', value);
 }
 
 // 排序的兩個欄位在兩種模式下叫不同名字：競標中看「最後更新」和「目前出價」，

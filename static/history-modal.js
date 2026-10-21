@@ -1,11 +1,6 @@
 // 共用的「出價歷史」彈出視窗 + 走勢圖邏輯，index.html 跟 history.html 都會用到。
 // 使用前頁面裡要有 #historyModal / #historyTitle / #historyChart / #historyTableWrap / #historyClose 這些元素。
 
-function extractPlateNumber(plate) {
-  const m = plate.match(/(\d+)\s*$/);
-  return m ? m[1] : plate;
-}
-
 // 錯誤提示：取代 alert()，從畫面底部浮出、4 秒後自己收掉，不用多按一次「確定」。
 // 看板和歷史頁都有載入這支，所以放在這裡給兩頁共用。
 let toastTimer = null;
@@ -28,8 +23,19 @@ function showToast(text) {
 // 目前彈窗顯示的是哪個號碼／監理站，截圖時要把這些資訊一起畫進圖片裡
 let currentHistoryContext = null;
 
+// 趨勢圖只畫最新一輪。歷史本來就只有這一面號牌（轄區＋監理站＋車種＋完整號牌）的紀錄，
+// 但同一面號牌也會流標後重新上架、出價次數從頭數起，跟上一輪畫在一起像崩盤。
+// 第幾輪由後端（history_db._tag_rounds）標在每一筆的 round 上，Discord 的圖用同一個欄位，
+// 換輪規則只有那一份。舊輪次留在下面的表格裡。
+function latestRound(history) {
+  if (history.length === 0) return [];
+  const last = history[history.length - 1].round;
+  return history.filter(h => h.round === last);
+}
+
 function renderHistoryChart(history, decided) {
   const container = document.getElementById('historyChart');
+  history = latestRound(history);
   if (history.length === 0) {
     container.innerHTML = '<div class="hint" style="text-align:center;padding:24px 0;">尚無歷史紀錄</div>';
     return;
@@ -58,17 +64,7 @@ function renderHistoryChart(history, decided) {
   // 橫軸位置照「第幾次出價」等比例排，不是每筆平均分一格——中間有幾次沒抓到金額時
   // （網站只公布當下的價格，兩次掃描之間的出價拿不到），第 9 次到第 18 次那段
   // 本來就該比第 7 次到第 8 次寬，平均分格會讓跳過 9 次跟跳過 1 次看起來一樣。
-  //
-  // 流標後換字首重新上架時，出價次數會從頭數起，這裡累加上一輪的次數當偏移量，
-  // 新一輪才會接在舊的右邊，而不是把線拉回頭。
-  const xVals = [];
-  let offset = 0, prevBid = null;
-  for (const h of history) {
-    const bid = Number(h.bid_count) || 0;
-    if (prevBid !== null && bid < prevBid) offset += prevBid + 1;  // +1：新一輪要落在上一輪最後一次的右邊
-    xVals.push(offset + bid);
-    prevBid = bid;
-  }
+  const xVals = history.map(h => Number(h.bid_count) || 0);
   const minX = Math.min(...xVals);
   const maxX = Math.max(...xVals);
   // 所有紀錄都停在同一次出價時（例如連兩天都還是第 3 次、沒人再加價），
@@ -192,17 +188,17 @@ function renderDecidedBanner(decided) {
 }
 
 async function openHistory(plate, category, section, station) {
+  // 標題寫完整號牌，不只寫數字：每一面號牌是獨立的，只寫 8888 看不出是哪一面
   currentHistoryContext = { plate, category, section, station };
-  document.getElementById('historyTitle').textContent = `號碼 ${extractPlateNumber(plate)}（${category}）`;
+  document.getElementById('historyTitle').textContent = `號碼 ${plate}（${category}）`;
   document.getElementById('historyChart').innerHTML = '<div class="hint" style="text-align:center;padding:24px 0;">載入中...</div>';
   document.getElementById('historyTableWrap').innerHTML = '';
   renderDecidedBanner(null);
   document.getElementById('historyModal').classList.add('show');
   try {
-    // 有帶 section/station 就一起送，避免不同監理站剛好尾數相同的號碼被誤連成同一條趨勢線
-    let url = `/api/history/${encodeURIComponent(plate)}?category=${encodeURIComponent(category)}`;
-    if (section) url += `&section=${encodeURIComponent(section)}`;
-    if (station) url += `&station=${encodeURIComponent(station)}`;
+    // 身分是轄區＋監理站＋車種＋完整號牌，四個都要送，後端少一個就回 400
+    const url = `/api/history/${encodeURIComponent(plate)}?category=${encodeURIComponent(category)}`
+      + `&section=${encodeURIComponent(section)}&station=${encodeURIComponent(station)}`;
     const resp = await fetch(url);
     const data = await resp.json();
     currentHistoryContext.history = data.history || [];
@@ -297,7 +293,7 @@ async function downloadHistoryScreenshot() {
 
     ctx.fillStyle = colorLabel;
     ctx.font = `600 14px ${fontStack}`;
-    ctx.fillText(`號碼 ${extractPlateNumber(plate)}（${category}）`, 12, 20);
+    ctx.fillText(`號碼 ${plate}（${category}）`, 12, 20);
     ctx.fillStyle = colorSecondary;
     ctx.font = `12px ${fontStack}`;
     ctx.fillText(`${section || ''} ${station || ''}`.trim(), 12, 38);
@@ -333,7 +329,7 @@ async function downloadHistoryScreenshot() {
 
     showScreenshotPreview(
       canvas.toDataURL('image/png'),
-      `車牌趨勢_${extractPlateNumber(plate)}_${station || ''}.png`
+      `車牌趨勢_${plate}_${station || ''}.png`
     );
   } catch (e) {
     console.error('產生截圖失敗', e);

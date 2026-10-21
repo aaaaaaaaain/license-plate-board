@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from plate_bid_scanner import get_all_sections_and_stations, scan
 
 from .config_store import CONFIG
-from .history_db import detect_decided, record_bid_changes, seed_relist_if_needed
+from .history_db import detect_decided, record_bid_changes
 from .logging_setup import logger
 from .notifications import send_broadcast_alerts, send_watchlist_alerts
 from .paths import LATEST_PATH
@@ -141,7 +141,6 @@ def run_scan_once():
             STATE["last_updated"] = datetime.now().isoformat(timespec="seconds")
             STATE["last_error"] = None
 
-        seed_relist_if_needed(enriched, STATE["last_updated"])
         record_bid_changes(enriched, STATE["last_updated"])
         detect_decided(enriched, STATE["last_updated"], failed_stations)
 

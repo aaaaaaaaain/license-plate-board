@@ -63,9 +63,12 @@ def api_stations():
 
 @bp.route("/api/history/<plate>")
 def api_history(plate):
+    # 一面號牌的身分是「轄區＋監理站＋車種＋完整號牌」，少一個就會把別面號牌混進來
     category = request.args.get("category")
     section = request.args.get("section")
     station = request.args.get("station")
+    if not (category and section and station):
+        return jsonify({"error": "需要 category、section、station"}), 400
     history, decided = get_plate_history(plate, category, section, station)
     return jsonify({"plate": plate, "history": history, "decided": decided})
 

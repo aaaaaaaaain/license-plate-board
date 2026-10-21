@@ -7,7 +7,7 @@ from plate_bid_scanner import CATEGORIES
 
 from .config_store import CONFIG
 from .chart_image import render_history_png
-from .history_db import get_history_filters, get_plate_history
+from .history_db import get_history_filters, get_plate_history, search_plate_histories
 from .public_url import get_public_url
 from .logging_setup import logger
 from .scanner import STATE, STATE_LOCK
@@ -32,6 +32,7 @@ def start_discord_bot():
             get_history_filters=get_history_filters,
             render_chart=render_history_png,
             get_public_url=get_public_url,
+            search_history=search_plate_histories,
         )
         try:
             bot.run(discord_cfg["bot_token"])

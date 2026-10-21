@@ -13,9 +13,9 @@ from .paths import HISTORY_DB_PATH, PREV_ACTIVE_PATH
 def extract_plate_number(plate):
     """從號牌字串取出結尾數字部分（例如 PJY-1111 -> 1111）。
 
-    同一個好號流標後重新上架，字首字母常會換掉，但大家真正在意、
-    持續追蹤的是這個數字本身，所以歷史紀錄用數字＋車種當作同一標的的 key，
-    不會因為換字首就被當成不同號牌、歷史斷開。
+    存成 number_key 只是為了「打 8888 找得到所有 8888」和判斷號碼型態，不是身分。
+    身分一律是「轄區＋監理站＋車種＋完整號牌（字首＋數字）」：PKC-8888 和 PLY-8888
+    是兩面不同的號牌、各自喊價，混在一起看會把上一面的成交價當成這一面的行情。
     """
     m = re.search(r"(\d+)\s*$", plate)
     return m.group(1) if m else plate
@@ -115,12 +115,12 @@ def init_history_db():
         )
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_bid_history_number ON bid_history(number_key, category)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_bid_history_identity "
+                 "ON bid_history(plate, category, section, station)")
 
-    # 決標紀錄連完整號牌一起存。只留數字的話，同一個監理站、同車種同時上架兩面
-    # 尾數相同、字首不同的號牌（桃園 2026-08-06 的 CDR-1688 和 CFG-1688）各自結標
-    # 後，兩列長得一模一樣，看不出是兩面號牌還是同一面被重複寫進去。
-    # number_key 仍然留著，而且查詢一律還是用它——「換字首重新上架算同一個號碼的
-    # 下一輪」那條規則沒有變，字首只是補上去讓紀錄認得出是哪一面。
+    # 決標紀錄連完整號牌一起存，身分跟出價歷史一樣是「轄區＋監理站＋車種＋完整號牌」。
+    # 只留數字的話，同一個監理站、同車種同時上架兩面尾數相同、字首不同的號牌
+    # （桃園 2026-08-06 的 CDR-1688 和 CFG-1688）各自結標後，兩列長得一模一樣。
     # UNIQUE 也含 plate：不含的話，兩面同時結標（最後一次出價落在同一輪）只會寫進
     # 一列，另一面被 INSERT OR IGNORE 默默吃掉。
     old_cols = [r[1] for r in conn.execute("PRAGMA table_info(decided_results)").fetchall()]
@@ -128,6 +128,8 @@ def init_history_db():
         _migrate_decided_add_plate(conn)
     conn.execute(_DECIDED_DDL)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_decided_number ON decided_results(number_key, category, section, station)")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_decided_identity "
+                 "ON decided_results(plate, category, section, station)")
 
     # 每個使用者自己收藏想追蹤的號碼，以「完整號牌＋車種」為單位：PJY-8888 和 BSA-8888
     # 是兩面不同的號牌，追蹤了哪一面就只提醒那一面。number_key 只是順便存著給查歷史用，
@@ -269,8 +271,7 @@ _MASS_MISSING_ROUNDS = 0
 def detect_decided(enriched, recorded_at, failed_stations=None):
     """比對這次掃描跟上一次掃描，找出「上次還在、這次不見了」的號碼＝剛決標，記下最後出價當作決標價。
 
-    決標紀錄只記數字＋車種＋監理站＋決標金額＋時間，不記字首字母
-    （同一個號碼換字首上架，決標紀錄還是算同一輪）。
+    決標紀錄記完整號牌＋車種＋轄區＋監理站＋決標金額＋時間，跟出價歷史同一個身分。
 
     failed_stations 是這一輪抓取失敗的 (轄區, 監理站)（整個轄區失敗時是 (轄區, None)）。
     那些站這次「沒有資料」是因為沒抓到，不是因為號碼結標了，所以不能判成決標，
@@ -362,53 +363,6 @@ def detect_decided(enriched, recorded_at, failed_stations=None):
 
     PREV_ACTIVE_KEYS = current_keys | held_keys
     save_prev_active_keys(PREV_ACTIVE_KEYS)
-
-
-def seed_relist_if_needed(enriched, recorded_at):
-    """號碼決標後，如果同一個監理站又重新上架同一個數字，
-    先把上次的決標價補成這一輪趨勢圖的起點，這樣新舊兩輪的價格才能接得起來看。
-
-    這裡用完整號牌判斷「是不是剛出現」，但用數字去找上一輪的決標價
-    （換字首也找得到），兩種 key 各司其職。
-    """
-    conn = sqlite3.connect(HISTORY_DB_PATH)
-    try:
-        for station in enriched:
-            for p in station["plates"]:
-                plate = p["號牌"]
-                category = p["號牌類別"]
-                section = station["section"]
-                station_name = station["station"]
-                key = (plate, category, section, station_name)
-                if key in PREV_ACTIVE_KEYS:
-                    continue  # 上次掃描就在了，不是剛重新上架
-                number_key = extract_plate_number(plate)
-                decided = conn.execute(
-                    "SELECT final_price, decided_at FROM decided_results "
-                    "WHERE number_key=? AND category=? AND section=? AND station=? "
-                    "ORDER BY decided_at DESC LIMIT 1",
-                    (number_key, category, section, station_name),
-                ).fetchone()
-                if not decided:
-                    continue
-                final_price, decided_at = decided
-                already_seeded = conn.execute(
-                    "SELECT 1 FROM bid_history "
-                    "WHERE number_key=? AND category=? AND section=? AND station=? AND recorded_at=? "
-                    "LIMIT 1",
-                    (number_key, category, section, station_name, decided_at),
-                ).fetchone()
-                if already_seeded:
-                    continue
-                conn.execute(
-                    "INSERT INTO bid_history "
-                    "(plate, number_key, section, station, category, price, bid_count, deadline, recorded_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                    (plate, number_key, section, station_name, category, final_price, "0", "", decided_at),
-                )
-        conn.commit()
-    finally:
-        conn.close()
 
 
 def get_decided_results():
@@ -536,65 +490,108 @@ def get_history_summary():
     ]
 
 
-def get_plate_history(plate, category=None, section=None, station=None):
-    """回傳 (history, decided)：history 是出價走勢，decided 是這個號碼決標後的最終結果。
+def _tag_rounds(history, decided_times):
+    """幫每一筆紀錄標上 round（第幾輪，從 0 起算），網頁和 Discord 的趨勢圖都只畫最大的那輪。
 
-    如果決標之後又出現更新的出價紀錄（代表已經重新上架、新一輪還在競標中），
-    就不算「已決標」了，decided 會是 None（但舊的決標價還是留在 history 裡當趨勢起點）。
-
-    只給 plate/category（不給 section/station）的話，是照數字＋車種找、不分監理站——
-    Discord 查詢指令用的是這種寬鬆比對。但網頁的趨勢圖一定要連 section/station 一起帶，
-    否則不同監理站剛好尾數相同的號碼（例如台北的 PJY-8888 跟桃園的 PKL-8888）會被
-    誤連成同一條趨勢線，價格看起來像忽然跳漲或跳跌。
+    同一面號牌（同一個身分）也會流標後重新上架，出價次數從頭數起、價格回到底價，
+    跟上一輪畫在同一張圖上看起來像崩盤。換輪的判斷：
+      - 出價次數比上一筆少（重新數起）；或
+      - 上一筆和這一筆之間夾著一次決標（上一輪最後一次只喊到第 1 次、新一輪也是
+        第 1 次時，次數沒有變少，只能靠決標時間分）。
+    在這裡算一次、隨資料送出去，兩份畫圖程式就不用各自維護一份換輪規則。
     """
-    number_key = extract_plate_number(plate)
-    conditions = ["number_key=?"]
-    params = [number_key]
-    if category:
-        conditions.append("category=?")
-        params.append(category)
-    if section:
-        conditions.append("section=?")
-        params.append(section)
-    if station:
-        conditions.append("station=?")
-        params.append(station)
-    where_sql = " AND ".join(conditions)
+    rnd = 0
+    prev = None
+    for h in history:
+        if prev is not None:
+            try:
+                restarted = int(h["bid_count"] or 0) < int(prev["bid_count"] or 0)
+            except (TypeError, ValueError):
+                restarted = False
+            decided_between = any(prev["recorded_at"] <= t < h["recorded_at"] for t in decided_times)
+            if restarted or decided_between:
+                rnd += 1
+        h["round"] = rnd
+        prev = h
+    return history
 
+
+def _load_histories(where_sql, params):
+    """照條件撈出出價紀錄和決標紀錄，依身分（完整號牌＋車種＋轄區＋監理站）分開，
+    回傳 {身分: (history, decided)}，照最後一筆紀錄的時間由舊到新排。
+
+    固定兩次查詢，不管符合幾面號牌：資料庫在 /mnt/d 走 9p，一次查詢就要一秒上下，
+    Discord 只打數字可能符合好幾十面，一面查一次會超過互動的 3 秒期限。
+    """
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:
         rows = conn.execute(
             f"SELECT plate, price, bid_count, recorded_at, category, section, station "
-            f"FROM bid_history WHERE {where_sql} ORDER BY recorded_at ASC",
+            f"FROM bid_history WHERE {where_sql} ORDER BY recorded_at ASC, id ASC",
             params,
         ).fetchall()
-        decided_row = conn.execute(
-            f"SELECT final_price, decided_at, plate FROM decided_results "
-            f"WHERE {where_sql} ORDER BY decided_at DESC LIMIT 1",
+        decided_rows = conn.execute(
+            f"SELECT plate, category, section, station, final_price, decided_at "
+            f"FROM decided_results WHERE {where_sql} ORDER BY decided_at ASC",
             params,
-        ).fetchone()
+        ).fetchall()
     finally:
         conn.close()
 
-    # 每一筆都帶上車種／轄區／監理站：不指定監理站查詢時，同一個數字可能同時來自
-    # 好幾個監理站，沒有這幾個欄位就分不出哪一筆是哪一站的（Discord 的歷史查詢會顯示）。
-    history = [
-        {
+    histories = {}
+    for r in rows:
+        histories.setdefault((r[0], r[4], r[5], r[6]), []).append({
             "plate": r[0], "price": r[1], "bid_count": r[2], "recorded_at": r[3],
             "category": r[4], "section": r[5], "station": r[6],
-        }
-        for r in rows
-    ]
-    decided = None
-    if decided_row:
-        final_price, decided_at, decided_plate = decided_row
-        has_newer_activity = any(h["recorded_at"] > decided_at for h in history)
-        if not has_newer_activity:
-            # 帶上得標的那一面完整號牌：這張趨勢圖是照數字查的，同一個數字換過
-            # 字首的話會有好幾面，只講金額看不出最後是哪一面標走的
-            decided = {"final_price": final_price, "decided_at": decided_at,
-                       "plate": decided_plate}
-    return history, decided
+        })
+    decided_by = {}
+    for plate, category, section, station, final_price, decided_at in decided_rows:
+        decided_by.setdefault((plate, category, section, station), []).append(
+            {"final_price": final_price, "decided_at": decided_at, "plate": plate})
+
+    result = {}
+    for identity, history in sorted(histories.items(), key=lambda kv: kv[1][-1]["recorded_at"]):
+        decided_list = decided_by.get(identity, [])
+        _tag_rounds(history, [d["decided_at"] for d in decided_list])
+        decided = None
+        # 同一面號牌決標之後又有更新的出價紀錄＝流標後重新上架、還在競標，不算已決標
+        if decided_list and not any(h["recorded_at"] > decided_list[-1]["decided_at"] for h in history):
+            decided = decided_list[-1]
+        result[identity] = (history, decided)
+    return result
+
+
+def get_plate_history(plate, category, section, station):
+    """回傳一面號牌的 (history, decided)：history 是出價紀錄（舊到新），decided 是最近一次決標。
+
+    身分是「轄區＋監理站＋車種＋完整號牌」，四個都要給、一律精確比對。以前是用
+    數字＋車種查，PKC-8888、PGT-8888、PLY-8888 三面號牌會被接成同一條線，
+    每一面從底價起標的地方都畫成崩盤（2026-10-21 板橋 8888）。
+    """
+    identity = (plate, category, section, station)
+    found = _load_histories("plate=? AND category=? AND section=? AND station=?", identity)
+    return found.get(identity, ([], None))
+
+
+def search_plate_histories(keyword, category=None, station=None):
+    """Discord 的 /歷史 用：打完整號牌（PJY-1111）或只打數字（1111），每一面號牌分開回傳。
+
+    回傳 [(身分, history, decided), ...]，最近有紀錄的排最後
+    （Discord 分頁預設翻到最後一頁，最新的那面剛好在眼前）。
+    """
+    keyword = (keyword or "").strip().upper()
+    if not keyword:
+        return []
+    conditions = ["plate=?" if re.search(r"[A-Z]", keyword) else "number_key=?"]
+    params = [keyword]
+    if category:
+        conditions.append("category=?")
+        params.append(category)
+    if station:
+        conditions.append("station=?")
+        params.append(station)
+    found = _load_histories(" AND ".join(conditions), params)
+    return [(identity, history, decided) for identity, (history, decided) in found.items()]
 
 
 def get_history_filters():

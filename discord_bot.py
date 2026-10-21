@@ -140,7 +140,7 @@ async def send_paginated(ctx, view):
 
 
 def build_bot(get_state, get_history=None, categories=None, prefix="!", get_history_filters=None,
-              render_chart=None, get_public_url=None):
+              render_chart=None, get_public_url=None, search_history=None):
     categories = categories or []
     intents = discord.Intents.default()
     intents.message_content = True
@@ -327,7 +327,7 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
             choices.insert(0, app_commands.Choice(name="全部型態", value="全部"))
         return choices[:25]
 
-    @bot.hybrid_command(name="歷史", aliases=["history"], description="查詢某個號碼的出價歷史紀錄（同號碼換字首也會一起追蹤）")
+    @bot.hybrid_command(name="歷史", aliases=["history"], description="查詢號牌的出價歷史紀錄（每一面號牌分開列）")
     @app_commands.describe(
         plate="號牌或號碼，自行輸入，例如：PJY-1111 或 1111",
         category="車種，可從清單直接點選（可留空＝不限車種）",
@@ -342,36 +342,35 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
         if station == "全部":
             station = ""
 
-        history, decided = (
-            await off_loop(get_history, plate, category or None, None, station or None)
-            if get_history else ([], None)
+        # 每一面號牌（轄區＋監理站＋車種＋完整號牌）是獨立的：只打數字會找到好幾面，
+        # 各自一段列出，不混成同一串——混在一起價格會忽高忽低，看不出哪一面喊到多少。
+        await ctx.defer()
+        found = (
+            await off_loop(search_history, plate, category or None, station or None)
+            if search_history else []
         )
         scope = "、".join(filter(None, [category, station]))
-        if not history:
+        if not found:
             extra = f"（{scope}）" if scope else ""
             await ctx.send(f"「{plate}」{extra}目前沒有歷史紀錄（號碼可能打錯，或還沒有出價紀錄）")
             return
 
+        total = sum(len(history) for _, history, _ in found)
         title = f"📈 號碼 {plate}"
         if scope:
             title += f"（{scope}）"
-        title += f" 出價歷史・共 {len(history)} 筆"
+        title += f" 出價歷史・{len(found)} 面號牌・共 {total} 筆"
 
-        # 沒指定監理站／車種時，同一個數字的紀錄可能混了好幾站、好幾種車種，
-        # 每一行補上來源才看得懂價格為什麼忽高忽低；已經限定的那一項就不再重複印。
         lines = []
-        for h in history:
-            src = "".join(
-                f"　{v}" for v in (
-                    h.get("station") if not station else None,
-                    h.get("category") if not category else None,
-                ) if v
-            )
-            lines.append(f"{h['recorded_at']}　{h['plate']}{src}　{h['price']} 元（第 {h['bid_count']} 次出價）")
+        for (p_plate, p_category, p_section, p_station), history, decided in found:
+            lines.append(f"**{p_plate}**　{p_section} {p_station}　{p_category}")
+            for h in history:
+                lines.append(f"{h['recorded_at']}　{h['price']} 元（第 {h['bid_count']} 次出價）")
+            if decided:
+                lines.append(f"✅ 已決標：{decided['final_price']} 元（{decided['decided_at']}）")
 
-        footer = f"\n✅ 已決標：{decided['final_price']} 元（{decided['decided_at']}）" if decided else ""
-        # 紀錄是由舊到新排的，但大家想先看到的是最新價格，所以直接翻到最後一頁
-        view = Paginator(lines, ctx.author.id, title, page_size=10, footer=footer, start_at_end=True)
+        # 最近有紀錄的那一面排在最後，大家想先看到的是最新價格，所以直接翻到最後一頁
+        view = Paginator(lines, ctx.author.id, title, page_size=10, start_at_end=True)
         await send_paginated(ctx, view)
 
     def _history_filters():

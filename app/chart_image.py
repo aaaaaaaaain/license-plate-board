@@ -4,7 +4,7 @@
 Discord 只認得 PNG／JPG 這類點陣圖，網頁那張趨勢圖是 SVG，貼過去只會變成
 一個要另外點開的附件。這裡用 Pillow 重畫一張，規則跟網頁版
 （static/history-modal.js）一致：橫軸是「第幾次出價」而且依次數等比例，
-縱軸是價格，每一筆抓到的紀錄都是一個點。
+縱軸是價格，每一筆抓到的紀錄都是一個點，只畫最新一輪（最新的那一面號牌）。
 """
 
 import io
@@ -43,25 +43,23 @@ def _font(size, bold=False):
     return ImageFont.load_default()
 
 
-def _x_positions(history):
-    """橫軸座標＝累計出價次數，跟網頁版同一套算法。
+def _bid(h):
+    try:
+        return int(h.get("bid_count") or 0)
+    except (TypeError, ValueError):
+        return 0
 
-    流標後換字首重新上架時出價次數會從頭數起，累加上一輪的次數當偏移量，
-    新一輪才會接在舊的右邊，而不是把線拉回頭。
+
+def _latest_round(history):
+    """只取最新一輪，跟網頁版（latestRound）同一套規則。
+
+    history 本來就只有一面號牌（轄區＋監理站＋車種＋完整號牌）的紀錄；同一面號牌
+    流標後重新上架會從底價重新喊起，第幾輪由 history_db._tag_rounds 標在 round 上。
     """
-    xs = []
-    offset = 0
-    prev = None
-    for h in history:
-        try:
-            bid = int(h.get("bid_count") or 0)
-        except (TypeError, ValueError):
-            bid = 0
-        if prev is not None and bid < prev:
-            offset += prev + 1
-        xs.append(offset + bid)
-        prev = bid
-    return xs
+    if not history:
+        return []
+    last = history[-1].get("round")
+    return [h for h in history if h.get("round") == last]
 
 
 def render_history_png(plate, category, section, station, history, decided=None):
@@ -77,6 +75,7 @@ def render_history_png(plate, category, section, station, history, decided=None)
     d.text((36, 30), f"號碼 {plate}（{category}）", font=f_title, fill=FG)
     d.text((36, 70), f"{section or ''} {station or ''}".strip(), font=f_sub, fill=DIM)
 
+    history = _latest_round(history)
     if not history:
         d.text((36, 200), "尚無出價紀錄", font=f_sub, fill=DIM)
         buf = io.BytesIO()
@@ -94,13 +93,19 @@ def render_history_png(plate, category, section, station, history, decided=None)
     range_p = max(round(max_p * 0.1), 100) if flat else max_p - min_p
     base_p = min_p - range_p / 2 if flat else min_p
 
-    xs = _x_positions(history)
+    xs = [_bid(h) for h in history]
     min_x = min(xs)
+    # 所有紀錄都停在同一次出價時依次數排會疊成一個點，退回照筆數平均分佈（網頁版同樣處理）
+    flat_x = max(xs) == min_x
     span_x = (max(xs) - min_x) or 1
     n = len(history)
 
     def px(i):
-        return PAD_LEFT + (plot_w / 2 if n == 1 else (xs[i] - min_x) / span_x * plot_w)
+        if n == 1:
+            return PAD_LEFT + plot_w / 2
+        if flat_x:
+            return PAD_LEFT + i / (n - 1) * plot_w
+        return PAD_LEFT + (xs[i] - min_x) / span_x * plot_w
 
     def py(v):
         return PAD_TOP + plot_h - (v - base_p) / range_p * plot_h
@@ -124,17 +129,21 @@ def render_history_png(plate, category, section, station, history, decided=None)
     d.text((WIDTH - PAD_RIGHT, py(last_price) - 28), last_text,
            font=f_label, fill=GREEN if decided else ACCENT, anchor="rt")
 
-    # 橫軸刻度：標頭尾，中間再補一個離頭尾都夠遠的，靠太近就不標（文字疊在一起更難看懂）
+    # 橫軸刻度：標頭尾，中間再補一個離頭尾都夠遠的，靠太近就不標（文字疊在一起更難看懂）。
+    # 全部同一次出價時只標一個，每個點都標「第 3 次」會像是軸的範圍。
     ticks = []
 
     def push(i):
         if 0 <= i < n and all(abs(px(j) - px(i)) >= 110 for j in ticks):
             ticks.append(i)
 
-    push(0)
-    push(n - 1)
-    mid_val = min_x + span_x / 2
-    push(min(range(n), key=lambda i: abs(xs[i] - mid_val)))
+    if flat_x:
+        push(n - 1)
+    else:
+        push(0)
+        push(n - 1)
+        mid_val = min_x + span_x / 2
+        push(min(range(n), key=lambda i: abs(xs[i] - mid_val)))
     for i in sorted(ticks):
         anchor = "ma" if n == 1 else "la" if i == 0 else "ra" if i == n - 1 else "ma"
         d.text((px(i), HEIGHT - PAD_BOTTOM + 18), f"第 {history[i].get('bid_count')} 次",
