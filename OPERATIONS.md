@@ -116,6 +116,39 @@ waitress: Serving on http://0.0.0.0:5000
 
 ---
 
+## 出價歷史資料庫與備份
+
+資料庫在 WSL 本機 `~/eve-data/history.db`（不在專案的 `data/`；放 `/mnt/d` 走 9p
+會慢 3～45 倍）。Windows 端要用 DB Browser 開的話，路徑是
+`\\wsl$\Ubuntu-24.04\home\user123\eve-data\history.db`，**開之前先停服務或只用唯讀開**。
+
+每天 04:00 由 systemd timer 備份回 `data/history.db.daily-YYYYMMDD`，保留最新 7 份
+（WSL 那時沒開的話，下次開機補跑）。手動留的 `history.db.bak-*` 不會被清。
+
+```bash
+# 下次什麼時候跑、上次跑了沒
+systemctl --user list-timers eve-db-backup.timer
+
+# 立刻備份一份（手動改資料庫前先做）
+systemctl --user start eve-db-backup.service
+
+# 看備份結果
+journalctl --user -u eve-db-backup.service -n 5 --no-pager
+```
+
+從備份還原（會蓋掉現在的資料庫，先確認要用哪一份）：
+
+```bash
+systemctl --user stop eve-webapp
+cp ~/eve-data/history.db ~/eve-data/history.db.before-restore
+cp /mnt/d/Users/Tester_APK.TW/Desktop/license-plate-board/data/history.db.daily-YYYYMMDD ~/eve-data/history.db
+systemctl --user start eve-webapp
+```
+
+timer 的設定檔在 `~/.config/systemd/user/eve-db-backup.{service,timer}`（不在版控裡）。
+
+---
+
 ## 對外網址（Cloudflare Quick Tunnel）
 
 目前用 `cloudflared tunnel --url http://127.0.0.1:5000` 這種「臨時通道」，

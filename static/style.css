@@ -659,6 +659,16 @@ td.remain {
   border: 0.5px solid var(--separator);
   border-radius: var(--r-control);
 }
+/* 趨勢圖表格裡每一輪的標題列（同一面號牌流標後重新上架才會有） */
+.history-table-wrap .round-heading td {
+  text-align: left;
+  font-weight: 600;
+  color: var(--label-secondary);
+  background: var(--fill-secondary);
+}
+.history-table-wrap .round-heading.relisted td {
+  color: var(--orange);
+}
 
 /* --- 設定頁 iOS 分組列表 --- */
 .ios-list-header {

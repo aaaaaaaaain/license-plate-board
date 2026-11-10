@@ -45,6 +45,9 @@ def setup_page():
             error = "密碼至少要 8 碼"
         else:
             with USERS_LOCK:
+                # 另一個初始化請求可能已先建立帳號；檢查與建立必須在同一把鎖內。
+                if ACCOUNTS:
+                    return redirect(url_for("pages.login_page"))
                 ACCOUNTS.append({
                     "username": username,
                     "password_hash": generate_password_hash(password),

@@ -4,6 +4,7 @@
 import json
 import re
 import sqlite3
+from bisect import bisect_right
 from datetime import datetime
 
 from .logging_setup import logger
@@ -448,14 +449,35 @@ def get_decided_results():
             FROM decided_results
             ORDER BY decided_at DESC
         """).fetchall()
+        bids = conn.execute(
+            "SELECT plate, category, section, station, bid_count, deadline, recorded_at "
+            "FROM bid_history ORDER BY recorded_at ASC, id ASC"
+        ).fetchall()
     finally:
         conn.close()
+    # 每筆決標是哪一輪的：取決標當下最後一筆出價的 round，跟看板、趨勢圖同一份換輪規則。
+    # round > 0 就是流標後重新上架那一輪的決標，標「（重新開標）」，不然歷史頁會出現兩列
+    # 一模一樣的號牌，看起來像重複紀錄（PJY-8888 07-28 22000、10-15 16000）。
+    # 不能用「前面有沒有別筆決標」判斷：63 筆有前一筆決標的裡面 39 筆跟前一筆是同一輪，
+    # 前一筆是掃描時短暫消失被誤判的假決標。
+    histories = {}
+    for plate, category, section, station, bid_count, deadline, recorded_at in bids:
+        histories.setdefault((plate, category, section, station), []).append(
+            {"bid_count": bid_count, "deadline": deadline or "", "recorded_at": recorded_at})
+    for history in histories.values():
+        _tag_rounds(history)
+    relisted = []
+    for r in rows:
+        history = histories.get((r[6], r[1], r[2], r[3]), [])
+        i = bisect_right([h["recorded_at"] for h in history], r[5]) if history else 0
+        relisted.append(i > 0 and history[i - 1]["round"] > 0)
     return [
         {
             "number_key": r[0], "category": r[1], "section": r[2], "station": r[3],
             "final_price": r[4], "decided_at": r[5], "plate": r[6],
+            "relisted": relisted[i],
         }
-        for r in rows
+        for i, r in enumerate(rows)
     ]
 
 
@@ -605,8 +627,9 @@ def _load_histories(where_sql, params):
     """照條件撈出出價紀錄和決標紀錄，依身分（完整號牌＋車種＋轄區＋監理站）分開，
     回傳 {身分: (history, decided)}，照最後一筆紀錄的時間由舊到新排。
 
-    固定兩次查詢，不管符合幾面號牌：資料庫在 /mnt/d 走 9p，一次查詢就要一秒上下，
-    Discord 只打數字可能符合好幾十面，一面查一次會超過互動的 3 秒期限。
+    固定兩次查詢，不管符合幾面號牌：Discord 只打數字可能符合好幾十面，一面查一次
+    會超過互動的 3 秒期限（資料庫還在 /mnt/d 走 9p 時就是這樣；搬到 ext4 後單次快很多，
+    但查詢次數照樣不要跟著符合的面數長）。
     """
     conn = sqlite3.connect(HISTORY_DB_PATH)
     try:

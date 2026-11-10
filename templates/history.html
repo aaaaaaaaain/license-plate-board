@@ -204,7 +204,7 @@ function renderDecidedRow(it) {
   return `
     <div class="ios-row number-row" data-plate="${it.plate}" data-category="${it.category}" data-section="${it.section}" data-station="${it.station}">
       <div>
-        <div style="font-weight:600;">號碼 ${it.plate}　<span class="hint" style="display:inline;">${it.category}</span></div>
+        <div style="font-weight:600;">號碼 ${it.plate}${it.relisted ? '<span class="relist-badge">（重新開標）</span>' : ''}　<span class="hint" style="display:inline;">${it.category}</span></div>
         <div class="hint" style="margin:2px 0 0;">
           ${it.section} ${it.station} · 決標時間 ${it.decided_at ? it.decided_at.replace('T', ' ') : '-'}
         </div>

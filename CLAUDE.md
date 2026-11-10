@@ -55,6 +55,13 @@ wsl -e bash -lc 'ps -eo cmd | grep "[s]leep infinity"'
 
 ## 資料規則
 
+**出價歷史資料庫在 WSL 本機 `~/eve-data/history.db`，不在專案的 `data/`**（2026-11-10
+搬過去；路徑在 `app/paths.py`，可用環境變數 `EVE_HISTORY_DB` 覆寫）。專案在 `/mnt/d`
+走 9p，同一批查詢在那裡慢 3～45 倍。`eve-db-backup.timer` 每天 04:00 用
+`backup_history_db.py` 備份回 `data/history.db.daily-YYYYMMDD`，保留 7 份；
+`data/history.db.bak-*` 是以前手動留的、不會被自動清。要手動改資料庫前，先
+`systemctl --user start eve-db-backup.service` 留一份。
+
 改 `app/history_db.py` 前務必理解這幾條，它們都是踩過坑之後定下來的：
 
 - **身分是「轄區＋監理站＋車種＋完整號牌（字首＋數字）」，每一組都是獨立的。**
@@ -130,9 +137,10 @@ wsl -e bash -lc 'ps -eo cmd | grep "[s]leep infinity"'
 
 ## Discord bot
 
-- **任何會阻塞的呼叫都要走 `off_loop`**（`asyncio.to_thread`）。資料庫在 `/mnt/d`
-  走 9p，單次查詢約 1.1 秒，而 Discord 只給互動 3 秒回應時間；自動完成更是每打一個
-  字查一次。直接寫在 async 函式裡會塞住事件迴圈，所有指令卡在「命令發送中」。
+- **任何會阻塞的呼叫都要走 `off_loop`**（`asyncio.to_thread`）。Discord 只給互動
+  3 秒回應時間，自動完成更是每打一個字查一次。資料庫還在 `/mnt/d`（9p）那時，重的
+  查詢一次要一秒以上，直接寫在 async 函式裡塞住了事件迴圈，所有指令卡在「命令發送
+  中」。搬到 ext4 後快很多，但阻塞呼叫照樣不能放在事件迴圈裡。
 - 選單最多 25 個選項、訊息上限 2000 字，分頁每頁筆數要留在這兩個範圍內。
 - 指令改名或改參數要重啟才會同步，Discord 端還要再等幾分鐘才看得到。
 - 狀態列只放數字：個人資料卡大約只顯示 30 個字，接網址會被截成「...」。

@@ -155,7 +155,8 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
     async def off_loop(fn, *args):
         """把會阻塞的工作丟到背景執行緒跑，不要卡住 Discord 的事件迴圈。
 
-        資料庫放在 /mnt/d（Windows 磁碟，走 9p），查一次要一秒上下——自動完成
+        資料庫以前放在 /mnt/d（Windows 磁碟，走 9p），重的查詢一次要一秒以上
+        （2026-11-10 已搬到 WSL 本機 ext4，見 app/paths.py）——自動完成
         更是每打一個字就查一次。這些呼叫本來直接寫在 async 函式裡，等於整個
         事件迴圈被佔住，期間所有互動都來不及在 Discord 給的 3 秒內回應，
         使用者看到的就是指令永遠停在「命令發送中」。
@@ -366,7 +367,15 @@ def build_bot(get_state, get_history=None, categories=None, prefix="!", get_hist
         lines = []
         for (p_plate, p_category, p_section, p_station), history, decided in found:
             lines.append(f"**{p_plate}**　{p_section} {p_station}　{p_category}")
+            # 流標後重新上架過的，每一輪前面加一行標題（跟網頁趨勢圖的表格一樣），
+            # 不然兩輪的第 1 次、第 17 次接在一起，看不出哪裡是重新喊起
+            multi = bool(history) and history[0].get("round") != history[-1].get("round")
+            prev_round = None
             for h in history:
+                if multi and h.get("round") != prev_round:
+                    n = (h.get("round") or 0) + 1
+                    lines.append(f"— 第 {n} 輪（重新開標） —" if n > 1 else f"— 第 {n} 輪 —")
+                    prev_round = h.get("round")
                 lines.append(f"{h['recorded_at']}　{h['price']} 元（第 {h['bid_count']} 次出價）")
             if decided:
                 lines.append(f"✅ 已決標：{decided['final_price']} 元（{decided['decided_at']}）")

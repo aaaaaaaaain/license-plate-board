@@ -159,13 +159,35 @@ function renderHistoryChart(history, decided) {
   `;
 }
 
+// 表格列，最新一筆在最上面。有好幾輪（流標後重新上架）時每一輪前面插一列標題，
+// 不然兩輪的「第 1 次」「第 17 次」接在一起，看不出哪裡是重新喊起。
+// 畫面上的表格和截圖都用這份，標題列是 { heading, relisted }，其餘是出價紀錄。
+function tableRowsByRound(history) {
+  const rows = history.slice().reverse();
+  const multi = rows.length > 0 && rows[0].round !== rows[rows.length - 1].round;
+  if (!multi) return rows;
+  const out = [];
+  let prev = null;
+  for (const h of rows) {
+    if (h.round !== prev) {
+      const n = (h.round || 0) + 1;
+      out.push({ heading: h.round > 0 ? `第 ${n} 輪（重新開標）` : `第 ${n} 輪`, relisted: h.round > 0 });
+      prev = h.round;
+    }
+    out.push(h);
+  }
+  return out;
+}
+
 function renderHistoryTable(history) {
   const wrap = document.getElementById('historyTableWrap');
   if (history.length === 0) {
     wrap.innerHTML = '';
     return;
   }
-  const rows = history.slice().reverse().map(h => `
+  const rows = tableRowsByRound(history).map(h => h.heading ? `
+    <tr class="round-heading${h.relisted ? ' relisted' : ''}"><td colspan="4">${h.heading}</td></tr>
+  ` : `
     <tr>
       <td>${h.recorded_at.replace('T', ' ')}</td>
       <td>${h.plate}</td>
@@ -268,8 +290,8 @@ async function downloadHistoryScreenshot() {
     });
     URL.revokeObjectURL(svgUrl);
 
-    // 下面的出價紀錄表格照畫面上的順序（最新一筆在最上面）
-    const rows = (history || []).slice().reverse();
+    // 下面的出價紀錄表格照畫面上的順序（最新一筆在最上面），一樣分輪
+    const rows = tableRowsByRound(history || []);
     const headerH = 46;
     const tableHeaderH = 22;
     const tableRowH = 20;
@@ -295,6 +317,7 @@ async function downloadHistoryScreenshot() {
     const colorSecondary = isDark ? '#8e8e93' : '#6d6d72';
     const colorAccent = isDark ? '#409cff' : '#0062cc';  // 跟 style.css 的 --accent 一致
     const colorSeparator = isDark ? 'rgba(255,255,255,.15)' : 'rgba(0,0,0,.1)';
+    const colorOrange = isDark ? '#FF9F0A' : '#C93400';  // 跟 style.css 的 --orange 一致
     const fontStack = '"PingFang TC", "Microsoft JhengHei", -apple-system, sans-serif';
 
     ctx.fillStyle = colorBg;
@@ -330,8 +353,15 @@ async function downloadHistoryScreenshot() {
         ctx.moveTo(0, y);
         ctx.lineTo(canvasW, y);
         ctx.stroke();
-        ctx.fillStyle = colorLabel;
-        for (const col of cols) ctx.fillText(col.get(r), col.x, y + 14);
+        if (r.heading) {
+          ctx.font = `600 10px ${fontStack}`;
+          ctx.fillStyle = r.relisted ? colorOrange : colorSecondary;
+          ctx.fillText(r.heading, 10, y + 14);
+          ctx.font = `10px ${fontStack}`;
+        } else {
+          ctx.fillStyle = colorLabel;
+          for (const col of cols) ctx.fillText(col.get(r), col.x, y + 14);
+        }
         y += tableRowH;
       }
     }
